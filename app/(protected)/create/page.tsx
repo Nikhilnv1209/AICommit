@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { createFormSchema, TFormData } from "@/utils/schema";
 import { submitCreateForm } from "@/app/actions";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
 
 const CreatePage = () => {
@@ -15,8 +16,7 @@ const CreatePage = () => {
       const response = await submitCreateForm(data);
 
       if (response?.error) {
-        toast.error("invalid input")
-        console.log(response.error); // Show error toast
+        toast.error(response.error._errors)// Show error toast
       } else {
         toast.success(response.success); // Show success toast
         reset(); // Reset form on success
@@ -60,8 +60,8 @@ const CreatePage = () => {
             />
             {errors.githubToken && <p className="text-red-400 text-xs my-1 ml-1">{errors.githubToken.message}</p>}
             </div>
-            <Button>
-              Create Project
+            <Button disabled={isSubmitting}>
+              {isSubmitting && <Loader2 className="animate-spin"/>}Create Project
             </Button>
           </form>
         </div>
