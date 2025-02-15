@@ -16,7 +16,7 @@ const CreatePage = () => {
       const response = await submitCreateForm(data);
 
       if (response?.error) {
-        toast.error(response.error._errors)// Show error toast
+        toast.error(response?.error)// Show error toast
       } else {
         toast.success(response.success); // Show success toast
         reset(); // Reset form on success
