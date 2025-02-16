@@ -7,10 +7,12 @@ import { createFormSchema, TFormData } from "@/utils/schema";
 import { submitCreateForm } from "@/app/actions";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import useProject from "@/hooks/use-project";
 
 
 const CreatePage = () => {
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<TFormData>({ resolver: zodResolver(createFormSchema) })
+  const { refreshProjects } = useProject();
 
   const onSubmit = async (data: TFormData) => {
       const response = await submitCreateForm(data);
@@ -20,6 +22,7 @@ const CreatePage = () => {
       } else {
         toast.success(response.success); // Show success toast
         reset(); // Reset form on success
+        refreshProjects(); // Refresh projects list
       }
   } 
 
