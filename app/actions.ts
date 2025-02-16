@@ -15,8 +15,6 @@ export async function submitCreateForm(formdata: TFormData) {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
-    console.log("Creating project for user:", userId);
-
     const project = await prisma.project.create({
       data: {
         name: result.data.projectName,
@@ -25,11 +23,36 @@ export async function submitCreateForm(formdata: TFormData) {
       },
     });
 
-    console.log("Project created:", project);
-
     return { success: `Project "${project.name}" created successfully!` };
   } catch (error) {
     console.log("Error:", error);
     return { error: "Failed to create the project. Please try again." };
+  }
+}
+
+
+export async function getProjects() {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const projects = await prisma.project.findMany({
+      where: {
+        UserToProject: {
+          some: {
+            userId: userId!,
+          },
+        },
+        deletedAt: null,
+      },
+      orderBy: {
+        createdAt: "desc",
+      }
+    });
+
+    return projects;
+  } catch (error) {
+    console.log("Error:", error);
+    return [];
   }
 }
