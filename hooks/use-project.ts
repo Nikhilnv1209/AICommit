@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getProjects } from "@/app/actions"; // Server action
-import useLocalStorage from "./useLocalStorage";
+import { useLocalStorage } from "usehooks-ts";
 
 
 const useProject = () => {
@@ -15,9 +14,7 @@ const useProject = () => {
 
   const [projectId, setProjectId] = useLocalStorage<string | null>("aicommit_projectid", null);
 
-  const project = useMemo(() => {
-    return projects?.find((p) => p.id === projectId) || null;
-  }, [projects, projectId]);
+  const project = projects?.find((p) => p.id === projectId);
 
   const refreshProjects = () => {
     queryClient.invalidateQueries({ queryKey: ["projects"] });
