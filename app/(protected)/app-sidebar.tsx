@@ -10,7 +10,7 @@ import { usePathname } from "next/navigation"
 
 const items = [
   {
-    title: "dashboard",
+    title: "Dashboard",
     url: "/dashboard",
     icon: LayoutDashboard
   },
