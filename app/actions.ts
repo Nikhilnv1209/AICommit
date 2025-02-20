@@ -3,6 +3,7 @@
 import { createFormSchema, TFormData } from "@/utils/schema";
 import { prisma } from "@/prisma/client";
 import { auth } from "@clerk/nextjs/server";
+import { pollCommits } from "@/lib/github";
 
 export async function submitCreateForm(formdata: TFormData) {
   try {
@@ -22,6 +23,8 @@ export async function submitCreateForm(formdata: TFormData) {
         UserToProject: { create: { userId: userId! } },
       },
     });
+
+    await pollCommits(project.id); // Poll commits after creating the project
 
     return { success: `Project "${project.name}" created successfully!` };
   } catch (error) {

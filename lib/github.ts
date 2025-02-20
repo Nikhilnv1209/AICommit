@@ -1,11 +1,11 @@
 import { prisma } from "@/prisma/client"
 import { Octokit } from "octokit"
+import axios from "axios"
+import { aisummarizeCommit } from "./gemini"
 
 export const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
 })
-
-const githubUrl = "https://github.com/docker/genai-stack"
 
 type Response = {
   commitHash         : string
@@ -15,7 +15,7 @@ type Response = {
   commitDate         : string
 }
 
-export const getCommitHashes = async (githubUrl: string): Promise<Response[]> => {
+export const getRepoCommits = async (githubUrl: string): Promise<Response[]> => {
   try {
     const [owner, repo] = githubUrl.split("/").slice(-2)
     if (!owner || !repo) {
@@ -46,12 +46,49 @@ export const getCommitHashes = async (githubUrl: string): Promise<Response[]> =>
 export const pollCommits = async (projectId: string) => {
   try {
     const { project, githubUrl } = await fetchProjectGithubUrl(projectId)
-    const commitHashes = await getCommitHashes(githubUrl)
-    const unProcessedCommits = await filterUnprocessedCommits(projectId, commitHashes)
-    console.log(unProcessedCommits)
+    const RepoCommits = await getRepoCommits(githubUrl)
+    const unProcessedCommits = await filterUnprocessedCommits(projectId, RepoCommits)
+
+    const summaryResponses = await Promise.allSettled(unProcessedCommits.map(commit => {
+      return summerizeCommit(githubUrl, commit.commitHash)
+    }))
+
+    const summeries = summaryResponses.map((response) => {
+      console.log("Response:", response)
+      if (response.status === "fulfilled") {
+        console.log("Summary:", response.value)
+        return response.value as string
+      }
+      return ''
+    })
+
+    const commits = await prisma.commit.createMany({
+      data: summeries.map((summary, index) => (
+        {
+        projectId,
+        commitHash         : unProcessedCommits[index]!.commitHash,
+        commitAuthorName   : unProcessedCommits[index]!.commitAuthorName,
+        commitAuthorAvatar : unProcessedCommits[index]!.commitAuthorAvatar,
+        commitMessage      : unProcessedCommits[index]!.commitMessage,
+        commitDate         : unProcessedCommits[index]!.commitDate,
+        summary
+      }))
+    })
+
+    return commits
   } catch (error) {
     console.error("Error polling commits:", error)
   }
+}
+
+async function summerizeCommit(githubUrl: string, commitHash: string) {
+  const { data } = await axios.get(`${githubUrl}/commit/${commitHash}.diff`, {
+    headers: {
+      Accept: "application/vnd.github.v3.diff"
+    }
+  })
+  
+  return await aisummarizeCommit(data) || ""
 }
 
 async function fetchProjectGithubUrl(projectId: string) {
@@ -74,7 +111,7 @@ async function fetchProjectGithubUrl(projectId: string) {
   }
 }
 
-async function filterUnprocessedCommits(projectId: string, commitHashes: Response[]) {
+async function filterUnprocessedCommits(projectId: string, RepoCommits: Response[]) {
   try {
     const processedCommits = await prisma.commit.findMany({
       where: {
@@ -82,7 +119,7 @@ async function filterUnprocessedCommits(projectId: string, commitHashes: Respons
       }
     })
 
-    return commitHashes.filter((commit) => 
+    return RepoCommits.filter((commit) => 
       !processedCommits.some((processedCommit) => processedCommit.commitHash === commit.commitHash)
     )
   } catch (error) {
@@ -90,5 +127,3 @@ async function filterUnprocessedCommits(projectId: string, commitHashes: Respons
     return []
   }
 }
-
-await pollCommits("cm7c6e5vo000052mcwwez1u41")
