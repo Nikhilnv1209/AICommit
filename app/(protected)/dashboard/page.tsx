@@ -1,8 +1,9 @@
 "use client";
+
 import useProject from '@/hooks/use-project';
-import { ExternalLink, ExternalLinkIcon, Github, GithubIcon } from 'lucide-react';
+import { ExternalLinkIcon, Github } from 'lucide-react';
 import Link from 'next/link';
-import React from 'react'
+import CommitLogs from './commit-logs';
 
 const DashBoard = () => {
   const { project } = useProject();
@@ -10,7 +11,7 @@ const DashBoard = () => {
   return (
     <div>
       <div className='flex items-center justify-between flex-wrap gap-y-4'>
-        {/* github link */}
+        {/* GitHub link */}
         <div className='w-fit rounded-md bg-primary px-4 py-3'>
           <div className="flex items-center">
             <Github className='text-white size-5' />
@@ -29,9 +30,9 @@ const DashBoard = () => {
         <div className="h-4"></div>
 
         <div className='flex items-center gap-4'>
-            TeamsMembers
-            Addmembers
-            ArchiveButton         
+          TeamsMembers
+          Addmembers
+          ArchiveButton         
         </div>
       </div>
 
@@ -43,9 +44,11 @@ const DashBoard = () => {
       </div>
 
       <div className="mt-8"></div>
-      CommitLogs
-    </div>
-  )
-}
 
-export default DashBoard
+      {/* 🔹 Wrap CommitLogs with Suspense */}
+        <CommitLogs />
+    </div>
+  );
+};
+
+export default DashBoard;

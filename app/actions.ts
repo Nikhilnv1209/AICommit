@@ -59,3 +59,24 @@ export async function getProjects() {
     return [];
   }
 }
+
+export async function getProjectCommits(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const commits = await prisma.commit.findMany({
+      where: {
+        projectId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return commits;
+  } catch (error) {
+    console.log("Error:", error);
+    return [];
+  }
+}
