@@ -1,12 +1,13 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { getProjects } from "@/app/actions"; // Server action
 import { useLocalStorage } from "usehooks-ts";
+import { getQueryClient } from "@/lib/react-query";
 
 
 const useProject = () => {
-  const queryClient = useQueryClient();
+  const queryClient = getQueryClient();
   const { data: projects, isLoading, error } = useQuery({
     queryKey: ["projects"],
     queryFn: getProjects,

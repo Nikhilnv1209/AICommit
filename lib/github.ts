@@ -7,7 +7,7 @@ export const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
 })
 
-type Response = {
+export type CommitResponse = {
   commitHash         : string
   commitAuthorName   : string
   commitAuthorAvatar : string
@@ -15,7 +15,7 @@ type Response = {
   commitDate         : string
 }
 
-export const getRepoCommits = async (githubUrl: string): Promise<Response[]> => {
+export const getRepoCommits = async (githubUrl: string): Promise<CommitResponse[]> => {
   try {
     const [owner, repo] = githubUrl.split("/").slice(-2)
     if (!owner || !repo) {
@@ -111,7 +111,7 @@ async function fetchProjectGithubUrl(projectId: string) {
   }
 }
 
-async function filterUnprocessedCommits(projectId: string, RepoCommits: Response[]) {
+async function filterUnprocessedCommits(projectId: string, RepoCommits: CommitResponse[]) {
   try {
     const processedCommits = await prisma.commit.findMany({
       where: {
