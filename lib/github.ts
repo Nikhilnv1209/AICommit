@@ -54,9 +54,7 @@ export const pollCommits = async (projectId: string) => {
     }))
 
     const summeries = summaryResponses.map((response) => {
-      console.log("Response:", response)
       if (response.status === "fulfilled") {
-        console.log("Summary:", response.value)
         return response.value as string
       }
       return ''
