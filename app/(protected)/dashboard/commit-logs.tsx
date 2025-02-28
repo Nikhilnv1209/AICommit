@@ -16,7 +16,7 @@ const CommitLogs = () => {
     queryKey: ["projectCommits", projectId],
     queryFn: async () => {
       if (!projectId) return [];
-      return await getProjectCommits(projectId)
+      return await getProjectCommits(projectId, project!.githubUrl)
     },
   });
 

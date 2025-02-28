@@ -17,7 +17,7 @@ export type CommitResponse = {
 
 export const getRepoCommits = async (githubUrl: string): Promise<CommitResponse[]> => {
   try {
-    const [owner, repo] = githubUrl.split("/").slice(-2)
+    const [owner, repo] = githubUrl!.split("/").slice(-2)
     if (!owner || !repo) {
       throw new Error("Invalid GitHub URL")
     }
@@ -43,9 +43,8 @@ export const getRepoCommits = async (githubUrl: string): Promise<CommitResponse[
   }
 }
 
-export const pollCommits = async (projectId: string) => {
+export const pollCommits = async (projectId: string, githubUrl: string) => {
   try {
-    const { project, githubUrl } = await fetchProjectGithubUrl(projectId)
     const RepoCommits = await getRepoCommits(githubUrl)
     const unProcessedCommits = await filterUnprocessedCommits(projectId, RepoCommits)
 
@@ -87,26 +86,6 @@ async function summerizeCommit(githubUrl: string, commitHash: string) {
   })
   
   return await aisummarizeCommit(data) || ""
-}
-
-async function fetchProjectGithubUrl(projectId: string) {
-  try {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: {
-        githubUrl: true
-      }
-    })
-
-    if (!project) {
-      throw new Error("Project not found")
-    }
-    
-    return { project, githubUrl: project?.githubUrl }
-  } catch (error) {
-    console.error("Error fetching project GitHub URL:", error)
-    throw error
-  }
 }
 
 async function filterUnprocessedCommits(projectId: string, RepoCommits: CommitResponse[]) {

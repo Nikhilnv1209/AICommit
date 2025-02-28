@@ -23,8 +23,9 @@ export async function submitCreateForm(formdata: TFormData) {
         UserToProject: { create: { userId: userId! } },
       },
     });
-
-    await pollCommits(project.id); // Poll commits after creating the project
+    
+    if (!project) throw new Error("Failed to create the project.");
+    await pollCommits(project.id, project.githubUrl!); // Poll commits after creating the project
 
     return { success: `Project "${project.name}" created successfully!` };
   } catch (error) {
@@ -60,11 +61,13 @@ export async function getProjects() {
   }
 }
 
-export async function getProjectCommits(projectId: string) {
+export async function getProjectCommits(projectId: string, githubUrl?: string) {
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
+    pollCommits(projectId, githubUrl!).then().catch((e) => {throw new Error(e)});
+    
     const commits = await prisma.commit.findMany({
       where: {
         projectId,
