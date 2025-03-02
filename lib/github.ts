@@ -104,3 +104,16 @@ async function filterUnprocessedCommits(projectId: string, RepoCommits: CommitRe
     return []
   }
 }
+
+export const getDefaultBranch = async (githubUrl: string) => {
+  const [owner, repo] = githubUrl!.split("/").slice(-2)
+  if (!owner ||!repo) {
+    throw new Error("Invalid GitHub URL")
+  }
+  const { data: branch } = await octokit.rest.repos.get({
+    owner: owner,
+    repo: repo,
+  })
+
+  return branch.default_branch
+}
