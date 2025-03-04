@@ -1,21 +1,27 @@
 import { prisma } from "@/prisma/client"
 import { Octokit } from "octokit"
 import axios from "axios"
-import { aisummarizeCommit } from "./gemini"
+import { aiSummarizeCommit } from "./gemini"
 
 export const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
 })
 
 export type CommitResponse = {
-  commitHash         : string
-  commitAuthorName   : string
-  commitAuthorAvatar : string
-  commitMessage      : string
-  commitDate         : string
+  commitHash: string
+  commitAuthorName: string
+  commitAuthorAvatar: string
+  commitMessage: string
+  commitDate: string
 }
 
-export const getRepoCommits = async (githubUrl: string): Promise<CommitResponse[]> => {
+// extent the commitresponse to add two new fiels to make processedCommit type
+type ProcessedCommit = CommitResponse & {
+  summary: string
+  projectId: string
+}
+
+export const getRepoCommits = async (githubUrl: string) => {
   try {
     const [owner, repo] = githubUrl!.split("/").slice(-2)
     if (!owner || !repo) {
@@ -31,11 +37,11 @@ export const getRepoCommits = async (githubUrl: string): Promise<CommitResponse[
     }) as any[]
 
     return sortCommits.slice(0, 10).map((commit) => ({
-      commitHash         : commit.sha as string,
-      commitAuthorName   : commit.commit?.author?.name ?? "",
-      commitAuthorAvatar : commit.author?.avatar_url ?? "",
-      commitMessage      : commit.commit.message ?? "",
-      commitDate         : commit.commit?.author?.date ?? "",
+      commitHash: commit.sha as string,
+      commitAuthorName: commit.commit?.author?.name ?? "",
+      commitAuthorAvatar: commit.author?.avatar_url ?? "",
+      commitMessage: commit.commit.message ?? "",
+      commitDate: commit.commit?.author?.date ?? "",
     }))
   } catch (error) {
     console.error("Error fetching commit hashes:", error)
@@ -48,57 +54,109 @@ export const pollCommits = async (projectId: string, githubUrl: string) => {
     const RepoCommits = await getRepoCommits(githubUrl)
     const unProcessedCommits = await filterUnprocessedCommits(projectId, RepoCommits)
 
-    const summaryResponses = await Promise.allSettled(unProcessedCommits.map(commit => {
-      return summerizeCommit(githubUrl, commit.commitHash)
-    }))
+    if (unProcessedCommits.length === 0) {
+      console.log("No new commits to process")
+      return { added: 0 }
+    }
 
-    const summeries = summaryResponses.map((response) => {
-      if (response.status === "fulfilled") {
-        return response.value as string
-      }
-      return ''
-    })
+    console.log(`Processing ${unProcessedCommits.length} new commits`)
 
-    const commits = await prisma.commit.createMany({
-      data: summeries.map((summary, index) => (
-        {
-        projectId,
-        commitHash         : unProcessedCommits[index]!.commitHash,
-        commitAuthorName   : unProcessedCommits[index]!.commitAuthorName,
-        commitAuthorAvatar : unProcessedCommits[index]!.commitAuthorAvatar,
-        commitMessage      : unProcessedCommits[index]!.commitMessage,
-        commitDate         : unProcessedCommits[index]!.commitDate,
-        summary
-      }))
-    })
+    // Process commits in batches to avoid overwhelming the queue
+    const batchSize = 5
+    const commitBatches = []
 
-    return commits
-  } catch (error) {
-    console.error("Error polling commits:", error)
+    for (let i = 0; i < unProcessedCommits.length; i += batchSize) {
+      commitBatches.push(unProcessedCommits.slice(i, i + batchSize))
+    }
+
+    const processedCommits: ProcessedCommit[] = []
+
+    for (let batch = 0; batch < commitBatches.length; batch++) {
+      console.log(`Processing commit batch ${batch + 1}/${commitBatches.length}`)
+
+      const batchResults = await Promise.allSettled(
+        commitBatches[batch].map(async (commit) => {
+          try {
+            const summary = await summerizeCommit(githubUrl, commit.commitHash)
+            return {
+              projectId,
+              commitHash: commit.commitHash,
+              commitAuthorName: commit.commitAuthorName,
+              commitAuthorAvatar: commit.commitAuthorAvatar,
+              commitMessage: commit.commitMessage,
+              commitDate: commit.commitDate,
+              summary
+            }
+          } catch (error) {
+            console.error(`Error processing commit ${commit.commitHash}:`, error)
+            throw error
+          }
+        })
+      )
+
+      // Filter successful results and add to processed commits
+      batchResults.forEach(result => {
+        if (result.status === "fulfilled") {
+          processedCommits.push(result.value)
+        }
+      })
+    }
+
+    if (processedCommits.length > 0) {
+      const commits = await prisma.commit.createMany({
+        data: processedCommits
+      })
+
+      console.log(`Successfully added ${commits.count} commits to the database`)
+      return commits
+    } else {
+      console.log("No commits were successfully processed")
+      return { count: 0 }
+    }
+  } catch (error: any) {
+    // Improved error handling
+    const errorMessage = error && typeof error === 'object' && error.message 
+      ? error.message 
+      : 'Unknown error occurred while polling commits';
+    
+    console.error("Error polling commits:", error || 'Unknown error')
+    return { error: errorMessage }
   }
 }
 
 async function summerizeCommit(githubUrl: string, commitHash: string) {
-  const { data } = await axios.get(`${githubUrl}/commit/${commitHash}.diff`, {
-    headers: {
-      Accept: "application/vnd.github.v3.diff"
+  try {
+    const response = await axios.get(`${githubUrl}/commit/${commitHash}.diff`, {
+      headers: { Accept: "application/vnd.github.v3.diff" }
+    });
+    const { data } = response;
+    
+    if (data == null || data.trim() === "") {
+      throw new Error(`Empty diff for commit ${commitHash}`);
     }
-  })
-  
-  return await aisummarizeCommit(data) || ""
+    
+    return await aiSummarizeCommit(data) || "";
+  } catch (error) {
+    console.error(`Error getting or summarizing commit ${commitHash}:`, error);
+    throw error;
+  }
 }
+
 
 async function filterUnprocessedCommits(projectId: string, RepoCommits: CommitResponse[]) {
   try {
     const processedCommits = await prisma.commit.findMany({
       where: {
         projectId
+      },
+      select: {
+        commitHash: true
       }
     })
 
-    return RepoCommits.filter((commit) => 
-      !processedCommits.some((processedCommit) => processedCommit.commitHash === commit.commitHash)
-    )
+    const processedHashes = new Set(processedCommits.map(commit => commit.commitHash))
+
+    return RepoCommits.filter(commit => !processedHashes.has(commit.commitHash))
   } catch (error) {
     console.error("Error filtering unprocessed commits:", error)
     return []
@@ -107,7 +165,7 @@ async function filterUnprocessedCommits(projectId: string, RepoCommits: CommitRe
 
 export const getDefaultBranch = async (githubUrl: string) => {
   const [owner, repo] = githubUrl!.split("/").slice(-2)
-  if (!owner ||!repo) {
+  if (!owner || !repo) {
     throw new Error("Invalid GitHub URL")
   }
   const { data: branch } = await octokit.rest.repos.get({

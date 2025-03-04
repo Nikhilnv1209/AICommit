@@ -10,7 +10,7 @@ const useProject = () => {
   const queryClient = getQueryClient();
   const { data: projects, isLoading, error } = useQuery({
     queryKey: ["projects"],
-    queryFn: getProjects,
+    queryFn: async () => await getProjects(),
   });
 
   const [projectId, setProjectId] = useLocalStorage<string | null>("aicommit_projectid", null);
