@@ -19,8 +19,8 @@ const RATE_LIMITS: {
     cooldownMs: number;
   };
 } = {
-  'gemini-2.0-flash-lite': {
-    maxRequestsPerMinute: 30,
+  'Gemini 2.0 Flash': {
+    maxRequestsPerMinute: 15,
     cooldownMs: 60 * 1000, // 60 seconds
   },
   'text-embedding-004': {
@@ -148,7 +148,7 @@ export const aiSummarizeCommit = async (commitDiff: string): Promise<string> => 
       \`\`\`diff
       ${commitDiff}
       \`\`\`
-      Provide a concise summary of changes in bullet points. Avoid file names unless necessary.
+      Provide a concise summary of changes in bullet points. Avoid file names unless necessary and *please provide the summary in no more than 100 words*.
     `;
 
     try {

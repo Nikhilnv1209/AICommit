@@ -103,10 +103,9 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
     const commits = await prisma.commit.findMany({
       where: {
         projectId,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+      }, orderBy: {
+        commitDate: "desc",
+      }
     });
 
     return commits;
