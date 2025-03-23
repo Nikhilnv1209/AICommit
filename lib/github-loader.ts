@@ -283,7 +283,7 @@ async function processEmbeddingsInBatches(
           },
         });
 
-        await prisma.$executeRaw`
+        await prisma.$queryRaw`
           UPDATE "SourceCodeEmbedding"
           SET "summeryEmbeddings" = ${embedding.embedding}::vector
           WHERE "id" = ${sourceCodeEmbedding.id}

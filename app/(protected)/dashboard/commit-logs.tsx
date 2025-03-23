@@ -15,9 +15,12 @@ const CommitLogs = () => {
   const { data: commits } = useQuery({
     queryKey: ["projectCommits", projectId],
     queryFn: async () => {
+      console.log("Query executed for projectId:", projectId);
       if (!projectId) return [];
       return await getProjectCommits(projectId, project!.githubUrl)
     },
+    staleTime: 1000 * 60 * 5, // 5 minutes
+    refetchOnWindowFocus: false,
   });
 
   return (

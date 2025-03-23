@@ -6,6 +6,8 @@ import { auth } from "@clerk/nextjs/server";
 import { pollCommits } from "@/lib/github";
 import { indexGithubRepo } from "@/lib/github-loader";
 
+const pollingProjects = new Set<string>();
+
 export async function submitCreateForm(formdata: TFormData) {
   try {
     const result = createFormSchema.safeParse(formdata); // Server-side validation
@@ -31,22 +33,27 @@ export async function submitCreateForm(formdata: TFormData) {
     // Start indexing the repo in the background
     // We don't await these operations to avoid timeout issues
     // They will run asynchronously with rate limiting
-    Promise.resolve().then(async () => {
-      try {
-        // Index repo files
-        if (project.githubToken) {
-          await indexGithubRepo(project.id, project.githubUrl!, project.githubToken);
-        } else {
-          await indexGithubRepo(project.id, project.githubUrl!);
+    if (!pollingProjects.has(project.id)) {
+      pollingProjects.add(project.id);
+      Promise.resolve().then(async () => {
+        try {
+          // Index repo files
+          if (project.githubToken) {
+            await indexGithubRepo(project.id, project.githubUrl!, project.githubToken);
+          } else {
+            await indexGithubRepo(project.id, project.githubUrl!);
+          }
+
+          // Poll commits after indexing is complete
+          await pollCommits(project.id, project.githubUrl!);
+
+        } catch (error) {
+          console.error("Background indexing error:", error);
+        } finally {
+          pollingProjects.delete(project.id); // Remove from polling set
         }
-
-        // Poll commits after indexing is complete
-        await pollCommits(project.id, project.githubUrl!);
-
-      } catch (error) {
-        console.error("Background indexing error:", error);
-      }
-    });
+      });
+    }
 
     return { success: `Project "${project.name}" created successfully! Indexing has started in the background.` };
   } catch (error) {
@@ -87,7 +94,8 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
     if (!userId) throw new Error("User not found.");
 
     // Start polling in the background, don't await
-    if (githubUrl) {
+    if (githubUrl && !pollingProjects.has(projectId)) {
+      pollingProjects.add(projectId);
       Promise.resolve().then(async () => {
         try {
           await pollCommits(projectId, githubUrl);
@@ -95,10 +103,12 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
           // Improved error handling
           const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
           console.error("Error polling commits in background:", errorDetails);
+        } finally {
+          pollingProjects.delete(projectId); // Remove from polling set
         }
       });
     }
-    
+
     // Return existing commits immediately
     const commits = await prisma.commit.findMany({
       where: {

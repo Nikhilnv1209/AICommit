@@ -79,47 +79,55 @@ class ModelRateLimiter {
       logger.debug(`Queue empty for ${this.model}. Processing stopped.`);
       return;
     }
-
+  
     this.processingQueue = true;
-
+  
     const now = Date.now();
     if (now - this.lastResetTime > this.cooldownMs) {
       this.requestsThisMinute = 0;
       this.lastResetTime = now;
       logger.debug(`Reset rate limit counter for ${this.model}`);
     }
-
+  
     if (this.requestsThisMinute >= this.maxRequestsPerMinute) {
       const timeToWait = this.cooldownMs - (now - this.lastResetTime);
-      logger.warn(`Rate limit reached for ${this.model}. Waiting ${timeToWait}ms.`);
+      logger.warn(`Local rate limit reached for ${this.model}. Waiting ${timeToWait}ms.`);
       setTimeout(() => this.processQueue(), timeToWait);
       return;
     }
-
+  
     const item = this.queue.shift();
     if (!item) {
       this.processingQueue = false;
       return;
     }
-
+  
     try {
       this.requestsThisMinute++;
-      logger.debug(`Processing request for ${this.model}. Requests this minute: ${this.requestsThisMinute}`);
+      logger.debug(`Processing request for ${this.model}. Requests this minute: ${this.requestsThisMinute}/${this.maxRequestsPerMinute}`);
       const result = await item.execute();
       item.resolve(result);
-      setTimeout(() => this.processQueue(), 50); // Continue with small delay
+      setTimeout(() => this.processQueue(), 50);
     } catch (error) {
-      if (
-        (error instanceof Error && (error.message.includes('429') || error.message.includes('rate limit'))) &&
-        item.retryCount < this.maxRetries
-      ) {
-        logger.warn(`Rate limit error for ${this.model}. Retrying (attempt ${item.retryCount + 1}/${this.maxRetries})`);
+      if (error instanceof Error && error.message.includes('429')) {
+        const retryCount = item.retryCount + 1;
+        logger.warn(`API rate limit exceeded for ${this.model} (HTTP 429). Retrying (attempt ${retryCount}/${this.maxRetries}) after ${this.cooldownMs}ms`);
+        if (retryCount <= this.maxRetries) {
+          this.queue.push({ ...item, retryCount });
+          setTimeout(() => this.processQueue(), this.cooldownMs);
+        } else {
+          logger.error(`Max retries (${this.maxRetries}) reached for ${this.model}. Giving up: ${error.message}`);
+          item.reject(error);
+          setTimeout(() => this.processQueue(), 50);
+        }
+      } else if (error instanceof Error && error.message.includes('rate limit')) {
+        logger.warn(`Generic rate limit error for ${this.model}. Retrying (attempt ${item.retryCount + 1}/${this.maxRetries})`);
         this.queue.push({ ...item, retryCount: item.retryCount + 1 });
         setTimeout(() => this.processQueue(), this.cooldownMs);
       } else {
         logger.error(`Failed processing request for ${this.model} after ${item.retryCount} retries: ${error}`);
         item.reject(error);
-        setTimeout(() => this.processQueue(), 50); // Continue even on failure
+        setTimeout(() => this.processQueue(), 50);
       }
     }
   }
@@ -127,18 +135,18 @@ class ModelRateLimiter {
 
 // Singleton rate limiters
 const rateLimiters: Record<string, ModelRateLimiter> = {
-  'gemini-2.0-flash-lite': new ModelRateLimiter('gemini-2.0-flash-lite'),
+  'gemini-2.0-flash': new ModelRateLimiter('gemini-2.0-flash'),
   'text-embedding-004': new ModelRateLimiter('text-embedding-004'),
 };
 
 // Initialize Google Generative AI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '');
-const generativeModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+const generativeModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 const embeddingModel = genAI.getGenerativeModel({ model: 'text-embedding-004' });
 
 // Rate-limited API functions
 export const aiSummarizeCommit = async (commitDiff: string): Promise<string> => {
-  return rateLimiters['gemini-2.0-flash-lite'].enqueue(async () => {
+  return rateLimiters['gemini-2.0-flash'].enqueue(async () => {
     const prompt = `
       You are an expert programmer summarizing a git diff.
       Git diff format reminder:
@@ -164,7 +172,7 @@ export const aiSummarizeCommit = async (commitDiff: string): Promise<string> => 
 };
 
 export const aiSummarizeCode = async (doc: Document): Promise<string> => {
-  return rateLimiters['gemini-2.0-flash-lite'].enqueue(async () => {
+  return rateLimiters['gemini-2.0-flash'].enqueue(async () => {
     const source = doc.metadata.source as string;
     const code = doc.pageContent.slice(0, 10000);
     const prompt = `
