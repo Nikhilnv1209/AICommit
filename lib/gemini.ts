@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, GenerateContentResponse } from '@google/generative-ai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Document } from '@langchain/core/documents';
 import winston from 'winston';
 
@@ -200,7 +200,7 @@ export const aiGenerateEmbeddings = async (summary: string): Promise<number[]> =
   return rateLimiters['text-embedding-004'].enqueue(async () => {
     try {
       const result = await embeddingModel.embedContent(summary);
-      logger.info(`Generated embeddings for summary`);
+      logger.info(`Generated embeddings for summary ${summary.slice(0, 40)}`);
       return result.embedding.values;
     } catch (error) {
       logger.error(`Error generating embeddings: ${error}`);
