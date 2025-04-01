@@ -15,7 +15,7 @@ const google = createGoogleGenerativeAI({
   apiKey: process.env.GEMINI_API_KEY
 });
 
-export async function askQuestion(question:string, projectId: string) {
+export async function askQuestion(question: string, projectId: string) {
   const stream = createStreamableValue();
 
   const queryVector = await aiGenerateEmbeddings(question);
@@ -24,28 +24,27 @@ export async function askQuestion(question:string, projectId: string) {
   const result = await prisma.$queryRaw`
     SELECT "fileName", "sourceCode", "summary",
     1 - ("summeryEmbeddings" <=> ${VectorQuery}::vector) AS similarity
-    FROM "SourceCodeEmbedding" WHERE
+    from "SourceCodeEmbedding" where
     "projectId" = ${projectId} AND
-    1 - ("summeryEmbeddings" <=> ${VectorQuery}::vector) > .5
+    1 - ("summeryEmbeddings" <=> ${VectorQuery}::vector) > 0.5
     ORDER BY similarity DESC
     LIMIT 10
-  ` as { fileName:string, sourceCode:string, summary:string }[]
+  ` as { fileName: string, sourceCode: string, summary: string }[];
 
   let context = "";
-
   for (const data of result) {
     context += `source: ${data.fileName}\n code content: ${data.sourceCode}\n summary of file: ${data.summary}\n\n`;
   }
 
   (async () => {
-    const { textStream } = await streamText({
-      model: google("gemini-1.5-pro"),
+    const { textStream } = streamText({
+      model: google("gemini-2.0-flash-001"),
       prompt: `
       AI assistant is a brand new, powerful, human-like artificial intelligence.
       The traits of AI include expert knowledge, helpfulness, cleverness, and articulateness.
       AI is a well-behaved and well-mannered individual.
-      AI will answer all questions in the HTML format. including code snippets, proper HTML formatting
-      AI is always friendly, kind, and inspiring, and he is eager to provide vivid and thoughtful responses to the user.
+      AI will answer all questions in the Markdown format, including code snippets, proper Markdown formatting and emojis. Also include proper indentations and line breaks.
+      AI will not answer any questions that are not related to the context provided.
       AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
       If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions, including code snippets.
       START CONTEXT BLOCK
@@ -57,22 +56,21 @@ export async function askQuestion(question:string, projectId: string) {
       END OF QUESTION
       AI assistant will take into account any CONTEXT BLOCK that is provided in a conversation.
       If the context does not provide the answer to question, the AI assistant will say, "I'm sorry, but I don't know the answer to that question".
-      AI assistant will not apologize for previous responses, but instead will indicated new information was gained.
+      AI assistant will not apologize for previous responses, but instead will indicate new information was gained.
       AI assistant will not invent anything that is not drawn directly from the context.
-      `
+      `,
     });
 
     for await (const delta of textStream) {
       stream.update(delta);
     }
-
-    stream.done();
+    stream.done(); // Ensure the stream is finalized
   })();
 
   return {
     output: stream.value,
-    fileReference: result
-  }
+    fileReference: result,
+  };
 }
 
 export async function submitCreateForm(formdata: TFormData) {
