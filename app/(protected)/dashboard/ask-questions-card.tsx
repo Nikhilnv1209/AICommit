@@ -11,6 +11,7 @@ import { readStreamableValue } from "ai/rsc";
 import Image from "next/image";
 import { FormEvent, useState } from "react";
 import "@/app/markdown-container.css";
+import CodeReferences from "./code-references";
 
 const AskQuestionsCard = () => {
   const { project } = useProject();
@@ -55,6 +56,7 @@ const AskQuestionsCard = () => {
               source={answer}
               className="w-full max-h-[60vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll" // Add a custom class
             />
+            <CodeReferences fileReferences={fileReference || []} />
           </div>
           <Button type="button" onClick={() => setOpen(false)}>Close</Button>
         </DialogContent>
