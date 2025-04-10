@@ -189,3 +189,25 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
     return [];
   }
 }
+
+export async function saveQuestion(projectId: string, question: string, answer:string, fileReferences: any) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const savedQuestion = await prisma.question.create({
+      data: {
+        question,
+        answer,
+        projectId,
+        userId,
+        fileReferences
+      },
+    });
+
+    return savedQuestion;
+  } catch (error) {
+    console.log("Error:", error);
+    return null;
+  }
+}

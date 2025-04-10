@@ -1,7 +1,7 @@
 "use client";
 
 import MDEditor from "@uiw/react-md-editor";
-import { askQuestion } from "@/app/actions";
+import { askQuestion, saveQuestion } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -12,13 +12,14 @@ import Image from "next/image";
 import { FormEvent, useState } from "react";
 import "@/app/markdown-container.css";
 import CodeReferences from "./code-references";
+import { toast } from "sonner";
 
 const AskQuestionsCard = () => {
   const { project } = useProject();
   const [question, setQuestion] = useState('');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [fileReference, setFileReference] = useState<{ fileName: string, sourceCode: string, summary: string }[] | null>(null);
+  const [fileReferences, setFileReference] = useState<{ fileName: string, sourceCode: string, summary: string }[]>([]);
   const [answer, setAnswer] = useState<string>("");
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -42,21 +43,40 @@ const AskQuestionsCard = () => {
     setLoading(false);
   };
 
+  const handleQuestionSave = async () => {
+    if (!project?.id || !question || !answer) {
+      toast.error("Something when wrong.");
+      return;
+    }
+
+    saveQuestion(project.id, question, answer, fileReferences).then(() => {
+      toast.success("Question saved successfully.");
+    }).catch((error) => {
+      console.error("Error saving question:", error);
+      toast.error("Something went wrong while saving the question.");
+    });
+  }
+
   return (
     <>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[70vw]">
           <DialogHeader>
-            <DialogTitle>
-              <Image src={"/logo.png"} alt="logo" width={40} height={40} />
-            </DialogTitle>
+            <div className="flex items-center gap-2">
+              <DialogTitle>
+                <Image src={"/logo.png"} alt="logo" width={40} height={40} />
+              </DialogTitle>
+              <Button variant={"outline"} onClick={handleQuestionSave}>
+                Save Answer
+              </Button>
+            </div>
           </DialogHeader>
           <div data-color-mode="light">
             <MDEditor.Markdown
               source={answer}
               className="w-full max-h-[60vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll" // Add a custom class
             />
-            <CodeReferences fileReferences={fileReference || []} />
+            <CodeReferences fileReferences={fileReferences || []} />
           </div>
           <Button type="button" onClick={() => setOpen(false)}>Close</Button>
         </DialogContent>
