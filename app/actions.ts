@@ -211,3 +211,24 @@ export async function saveQuestion(projectId: string, question: string, answer:s
     return null;
   }
 }
+
+export async function getQuestions(projectId: string) {
+  try {
+    const questions = await prisma.question.findMany({
+      where: {
+        projectId,
+      },
+      include: {
+        user: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      }
+    });
+
+    return questions;
+  } catch (error) {
+    console.log("Error:", error);
+    return null;
+  }
+}

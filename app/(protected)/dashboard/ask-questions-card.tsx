@@ -13,6 +13,7 @@ import { FormEvent, useState } from "react";
 import "@/app/markdown-container.css";
 import CodeReferences from "./code-references";
 import { toast } from "sonner";
+import { getQueryClient } from "@/lib/react-query";
 
 const AskQuestionsCard = () => {
   const { project } = useProject();
@@ -59,7 +60,9 @@ const AskQuestionsCard = () => {
           return "Something went wrong.";
         },
       }
-    );  
+    );
+    
+    getQueryClient().invalidateQueries({queryKey: ["questions"]})
   }
 
   return (
