@@ -49,12 +49,17 @@ const AskQuestionsCard = () => {
       return;
     }
 
-    saveQuestion(project.id, question, answer, fileReferences).then(() => {
-      toast.success("Question saved successfully.");
-    }).catch((error) => {
-      console.error("Error saving question:", error);
-      toast.error("Something went wrong while saving the question.");
-    });
+    toast.promise(
+      saveQuestion(project.id, question, answer, fileReferences),
+      {
+        loading: "Saving...",
+        success: () => "Saved successfully!",
+        error: (err) => {
+          console.error(err);
+          return "Something went wrong.";
+        },
+      }
+    );  
   }
 
   return (
@@ -71,10 +76,10 @@ const AskQuestionsCard = () => {
               </Button>
             </div>
           </DialogHeader>
-          <div data-color-mode="light">
+          <div data-color-mode="light" className="w-full max-h-[95vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll">
             <MDEditor.Markdown
               source={answer}
-              className="w-full max-h-[60vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll" // Add a custom class
+              className="w-full max-h-[30vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll" // Add a custom class
             />
             <CodeReferences fileReferences={fileReferences || []} />
           </div>
