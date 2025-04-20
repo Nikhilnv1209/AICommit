@@ -33,8 +33,7 @@ const items = [
 
 const AppSidebar = () => {
   const pathname = usePathname();
-  const {projects, project, projectId, setProjectId} = useProject();
-  console.log("Selected project", project)
+  const {projects, projectId, setProjectId} = useProject();
   const { open } = useSidebar();
   return (
     <Sidebar collapsible="icon" variant="floating">
