@@ -1,9 +1,11 @@
+@import url("../public/Fonts/helvetica-255-webfont/style.css");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+
 body {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Helvetica";
 }
 
 
