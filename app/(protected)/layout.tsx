@@ -1,4 +1,4 @@
-import { SidebarProvider } from '@/components/ui/sidebar'
+import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { UserButton } from '@clerk/nextjs'
 import React from 'react'
 import AppSidebar from './app-sidebar'
@@ -14,6 +14,7 @@ const SideBarLayout = ({ children }: Props) => {
       <AppSidebar />
       <main className='w-full m-2'>
         <div className='flex items-center gap-2 border-sidebar-border bg-sidebar border shadow rounded-md px-4 py-2'>
+            <SidebarTrigger className="-ml-2 md:hidden" />
             {/* Seachbar component */}
             <div className="ml-auto flex items-center gap-2">
               <ThemeSwitcher />

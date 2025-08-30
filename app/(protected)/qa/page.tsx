@@ -59,17 +59,25 @@ const QAPage = () => {
         
         {
           question && (
-            <SheetContent className="sm:max-w-[70vw] max-h-[90vh] flex flex-col">
+            <SheetContent 
+              side="right" 
+              className="w-full sm:w-[90vw] md:w-[70vw] lg:w-[60vw] xl:w-[50vw] h-screen flex flex-col p-4 sm:p-6"
+            >
               <SheetHeader className="flex-shrink-0">
-                <SheetTitle className="break-words">
+                <SheetTitle className="break-words text-base sm:text-lg md:text-xl">
                   {question.question}
                 </SheetTitle>
               </SheetHeader>
-              <div className="flex-grow overflow-y-auto">
-                <div data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}>
+              <div className="flex-grow overflow-y-auto mt-4">
+                <div 
+                  data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}
+                  className="prose prose-sm sm:prose-base max-w-none"
+                >
                   <MDEditor.Markdown source={question.answer}/>
                 </div>
-                <CodeReferences fileReferences={(question.fileReferences ?? []) as any} />
+                <div className="mt-6">
+                  <CodeReferences fileReferences={(question.fileReferences ?? []) as any} />
+                </div>
               </div>
             </SheetContent>
           )

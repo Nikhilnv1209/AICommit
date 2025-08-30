@@ -26,9 +26,9 @@ const CodeReferences = ({ fileReferences }: Props) => {
   if (fileReferences.length === 0) return null;
 
   return (
-    <div className="max-w-[70vw] mt-2">
+    <div className="w-full mt-2">
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="overflow-auto flex gap-2 bg-muted p-1.5 rounded-md">
+        <div className="overflow-x-auto flex gap-2 bg-muted p-1.5 rounded-md">
           {fileReferences.map((file) => (
             <Button
               key={file.fileName}
@@ -36,7 +36,7 @@ const CodeReferences = ({ fileReferences }: Props) => {
               variant={'ghost'}
               size="sm"
               className={cn(
-                'px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap text-muted-foreground bg-muted hover:bg-muted-foreground hover:text-primary-foreground',
+                'px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap text-muted-foreground bg-muted hover:bg-muted-foreground hover:text-primary-foreground flex-shrink-0',
                 {
                   'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground': tab === file.fileName,
                 }
@@ -50,13 +50,20 @@ const CodeReferences = ({ fileReferences }: Props) => {
           <TabsContent
             key={file.fileName}
             value={file.fileName}
-            className="max-h-[40vh] overflow-y-auto max-w-7xl rounded-md custom-markdown-scroll"
+            className="max-h-[40vh] overflow-y-auto rounded-md custom-markdown-scroll mt-2"
           >
             <SyntaxHighlighter
               language="typescript"
               style={resolvedTheme === 'dark' ? lucario : oneLight}
               wrapLines={true}
               wrapLongLines={true}
+              customStyle={{
+                fontSize: '0.8rem',
+                padding: '1rem'
+              }}
+              lineNumberStyle={{
+                fontSize: '0.7rem'
+              }}
             >
               {file.sourceCode}
             </SyntaxHighlighter>
