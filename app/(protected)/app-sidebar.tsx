@@ -94,54 +94,52 @@ const AppSidebar = () => {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel>
-            Your projects
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {
-                projects && projects.map((project) => {
-                  return (
-                    <SidebarMenuItem key={project.name}>
-                      <SidebarMenuButton asChild>
-                        <div className="cursor-pointer" onClick={() => setProjectId(project.id)}>
-                          <div
-                            className={cn(
-                              "rounded-sm border size-6 flex items-center justify-center text-sm bg-muted text-foreground",
-                              {
-                                "bg-primary text-primary-foreground": project.id === projectId,
-                              }
-                            )}
+        {open && (
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              Your projects
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {
+                  projects && projects.map((project) => {
+                    return (
+                      <SidebarMenuItem key={project.name}>
+                        <SidebarMenuButton asChild>
+                          <div 
+                            className="cursor-pointer w-full flex items-center gap-2"
+                            onClick={() => setProjectId(project.id)}
                           >
-                            {project.name[0]}
+                            <div
+                              className={cn(
+                                "rounded-sm border size-6 flex items-center justify-center text-sm bg-muted text-foreground flex-shrink-0",
+                                project.id === projectId && "bg-primary text-primary-foreground"
+                              )}
+                            >
+                              {project.name[0]}
+                            </div>
+                            <span className="truncate">{project.name}</span>
                           </div>
-                          <span>{project.name}</span>
-                        </div>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )
-                })
-              }
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  })
+                }
 
-              {/* create project button */}
-              <div className="h-2"></div>
-              {
-                open && (
-                  <SidebarMenuItem>
-                    <Link href={"/create"}>
-                      <Button variant={"outline"} className="w-fit">
-                        <Plus />
-                        Create Project
-                      </Button>
-                    </Link>
-                  </SidebarMenuItem>
-                )
-              }
-
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+                {/* create project button */}
+                <div className="h-2"></div>
+                <SidebarMenuItem>
+                  <Link href={"/create"}>
+                    <Button variant={"outline"} className="w-fit">
+                      <Plus />
+                      Create Project
+                    </Button>
+                  </Link>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
     </Sidebar>
   )

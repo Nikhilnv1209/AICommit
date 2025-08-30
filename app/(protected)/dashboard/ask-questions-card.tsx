@@ -9,11 +9,12 @@ import { Textarea } from "@/components/ui/textarea";
 import useProject from "@/hooks/use-project";
 import { readStreamableValue } from "ai/rsc";
 import Image from "next/image";
-import { FormEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useState } from "react";
 import "@/app/markdown-container.css";
 import CodeReferences from "./code-references";
 import { toast } from "sonner";
 import { getQueryClient } from "@/lib/react-query";
+import { cn } from "@/lib/utils";
 
 const AskQuestionsCard = () => {
   const { project } = useProject();
@@ -48,6 +49,38 @@ const AskQuestionsCard = () => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Submit on Enter (without Ctrl/Meta)
+    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      // Only submit if there's text and not loading
+      if (question.trim() && !loading) {
+        // Create a synthetic form submit event
+        const form = e.currentTarget.closest('form');
+        if (form) {
+          const submitEvent = new Event('submit', { cancelable: true, bubbles: true });
+          form.dispatchEvent(submitEvent);
+        }
+      }
+    }
+    // For Ctrl+Enter, we manually insert a newline
+    if ((e.key === 'Enter' && e.ctrlKey) || (e.key === 'Enter' && e.metaKey)) {
+      e.preventDefault();
+      const textarea = e.currentTarget;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const text = textarea.value;
+      const before = text.substring(0, start);
+      const after = text.substring(end);
+      setQuestion(before + '\n' + after);
+      
+      // Set cursor position after the inserted newline
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + 1;
+      }, 0);
     }
   };
 
@@ -119,8 +152,12 @@ const AskQuestionsCard = () => {
               placeholder="Which file should I edit to change the home page"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={handleKeyDown}
               className="h-32"
             />
+            <div className="mt-1 text-xs text-muted-foreground">
+              Press Enter to submit · Ctrl+Enter for new line
+            </div>
             <div className="h-4"></div>
             <Button type="submit" disabled={loading}>
               {loading ? (
