@@ -91,7 +91,7 @@ const CommitLogs = () => {
             className="relative mt-4 size-8 flex-none rounded-full bg-muted"
           />
           <div className="flex-auto rounded-md bg-card p-3 ring-1 ring-inset ring-border">
-            <div className="flex justify-between gap-x-4">
+            <div className="flex flex-wrap justify-between gap-x-4 gap-y-2">
               <Link
                 href={`${project?.githubUrl}/commit/${commit.commitHash}`}
                 target="_blank"
@@ -106,8 +106,8 @@ const CommitLogs = () => {
                 </span>
               </Link>
             </div>
-            <span className="font-semibold">{commit.commitMessage}</span>
-            <pre className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+            <p className="font-semibold break-words">{commit.commitMessage}</p>
+            <pre className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground overflow-x-auto">
               {commit.summary}
             </pre>
           </div>

@@ -108,8 +108,8 @@ const AskQuestionsCard = () => {
   return (
     <>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[70vw]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[70vw] max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <div className="flex items-center gap-2">
               <DialogTitle>
                 <Image 
@@ -132,17 +132,21 @@ const AskQuestionsCard = () => {
               </Button>
             </div>
           </DialogHeader>
-          <div data-color-mode="light" className="w-full max-h-[95vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll">
-            <MDEditor.Markdown
-              source={answer}
-              className="w-full max-h-[30vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll" // Add a custom class
-            />
-            <CodeReferences fileReferences={fileReferences || []} />
+          <div className="flex-grow overflow-y-auto">
+            <div data-color-mode="light" className="w-full max-h-[60vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll">
+              <MDEditor.Markdown
+                source={answer}
+                className="w-full overflow-y-auto break-words py-4 px-2 custom-markdown-scroll"
+              />
+              <CodeReferences fileReferences={fileReferences || []} />
+            </div>
           </div>
-          <Button type="button" onClick={() => setOpen(false)}>Close</Button>
+          <div className="flex-shrink-0 mt-4">
+            <Button type="button" onClick={() => setOpen(false)} className="w-full sm:w-auto">Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
-      <Card className="relative col-span-3">
+      <Card className="relative w-full">
         <CardHeader>
           <CardTitle className="font-bold text-lg">Ask a Question</CardTitle>
         </CardHeader>
@@ -153,13 +157,13 @@ const AskQuestionsCard = () => {
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="h-32"
+              className="h-32 w-full"
             />
             <div className="mt-1 text-xs text-muted-foreground">
               Press Enter to submit · Ctrl+Enter for new line
             </div>
             <div className="h-4"></div>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading} className="w-full sm:w-auto">
               {loading ? (
                 <div className="flex items-center gap-2">
                   <svg

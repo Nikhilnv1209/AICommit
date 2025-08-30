@@ -27,53 +27,54 @@ const QAPage = () => {
 
   return (
     <Sheet>
-      <AskQuestionsCard />
-      <div className="h-4"></div>
-      <h1 className="text-xl font-semibold mb-2">Saved Questions</h1>
-      <div className="flex flex-col gap-6">
-        {questions?.map((question, index) =>
-          <React.Fragment key={question.id}>
-            <SheetTrigger onClick={() => setquestionIndex(index)}>
-              <div className="flex items-center gap-4 bg-card text-card-foreground rounded-lg p-3 shadow border border-border">
-                <img className="rounded-full object-contain" height={32} width={32} src={question.user.imageUrl ?? ""}/>
+      <div className="w-full">
+        <AskQuestionsCard />
+        <div className="h-4"></div>
+        <h1 className="text-xl font-semibold mb-2">Saved Questions</h1>
+        <div className="flex flex-col gap-4">
+          {questions?.map((question, index) =>
+            <React.Fragment key={question.id}>
+              <SheetTrigger onClick={() => setquestionIndex(index)} className="w-full text-left">
+                <div className="flex items-start gap-3 bg-card text-card-foreground rounded-lg p-3 shadow border border-border w-full">
+                  <img className="rounded-full object-contain mt-1" height={32} width={32} src={question.user.imageUrl ?? ""}/>
 
-                <div className="flex flex-col text-left">
-                  <div className="flex items-center gap-2">
-                    <p className="text-foreground line-clamp-1 font-medium">
-                      {question.question}
-                    </p>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">
-                      {question.createdAt.toLocaleDateString()}
-                    </span>
+                  <div className="flex flex-col text-left flex-grow min-w-0">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="text-foreground font-medium line-clamp-2">
+                        {question.question}
+                      </p>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
+                        {question.createdAt.toLocaleDateString()}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground line-clamp-2 text-sm mt-1">
+                        {question.answer}
+                      </p>
                   </div>
-                  <p className="text-muted-foreground line-clamp-1 text-sm">
-                      {question.answer}
-                    </p>
                 </div>
+              </SheetTrigger>
+            </React.Fragment>
+          )}
+        </div>
+        
+        {
+          question && (
+            <SheetContent className="sm:max-w-[70vw] max-h-[90vh] flex flex-col">
+              <SheetHeader className="flex-shrink-0">
+                <SheetTitle className="break-words">
+                  {question.question}
+                </SheetTitle>
+              </SheetHeader>
+              <div className="flex-grow overflow-y-auto">
+                <div data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}>
+                  <MDEditor.Markdown source={question.answer}/>
+                </div>
+                <CodeReferences fileReferences={(question.fileReferences ?? []) as any} />
               </div>
-            </SheetTrigger>
-          </React.Fragment>
-        )}
+            </SheetContent>
+          )
+        }
       </div>
-      
-      {
-        question && (
-          <SheetContent className="sm:max-w-[70vw]">
-            <SheetHeader>
-              <SheetTitle>
-                {question.question}
-              </SheetTitle>
-              <div data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}>
-                <MDEditor.Markdown source={question.answer}/>
-              </div>
-              <CodeReferences fileReferences={(question.fileReferences ?? []) as any} />
-            </SheetHeader>
-          </SheetContent>
-        )
-      }
-
-
-
     </Sheet>
   )
 }

@@ -10,10 +10,10 @@ const DashBoard = () => {
   const { project } = useProject();
 
   return (
-    <div>
-      <div className='flex items-center justify-between flex-wrap gap-y-4'>
+    <div className="w-full">
+      <div className='flex flex-col sm:flex-row sm:items-center justify-between flex-wrap gap-4'>
         {/* GitHub link */}
-        <div className='w-fit rounded-md bg-primary px-4 py-3'>
+        <div className='w-full sm:w-fit rounded-md bg-primary px-4 py-3'>
           <div className="flex items-center">
             <Github className='text-primary-foreground size-5' />
             <div className="ml-2">
@@ -28,19 +28,21 @@ const DashBoard = () => {
           </div>
         </div>
 
-        <div className="h-4"></div>
-
         <div className='flex items-center gap-4'>
-          TeamsMembers
-          Addmembers
-          ArchiveButton         
+          <div className="text-sm">TeamsMembers</div>
+          <div className="text-sm">Addmembers</div>
+          <div className="text-sm">ArchiveButton</div>         
         </div>
       </div>
 
       <div className="mt-4">
-        <div className='grid grid-cols-1 gap-4 sm:grid-cols-5'>
-          <AskQuestionsCard/>
-          Meeting card
+        <div className='grid grid-cols-1 gap-4 lg:grid-cols-5'>
+          <div className="lg:col-span-3">
+            <AskQuestionsCard/>
+          </div>
+          <div className="lg:col-span-2">
+            Meeting card
+          </div>
         </div>
       </div>
 

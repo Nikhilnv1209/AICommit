@@ -27,14 +27,14 @@ const CreatePage = () => {
   } 
 
   return (
-    <div className="flex items-center justify-center gap-12 h-full">
-      <img src="/create_page.svg" className="h-56 w-auto" />
-      <div>
+    <div className="flex flex-col md:flex-row items-center justify-center gap-8 md:gap-12 h-full p-4">
+      <img src="/create_page.svg" className="h-40 w-auto md:h-56" />
+      <div className="w-full max-w-md">
         <div>
           <h1 className="font-semibold text-2xl text-center">
             Link your Github Repository
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground text-center">
             Connect your Github repository for start using AICommit
           </p>
         </div>
@@ -63,8 +63,8 @@ const CreatePage = () => {
             />
             {errors.githubToken && <p className="text-red-400 text-xs my-1 ml-1">{errors.githubToken.message}</p>}
             </div>
-            <Button disabled={isSubmitting}>
-              {isSubmitting && <Loader2 className="animate-spin"/>}Create Project
+            <Button disabled={isSubmitting} className="w-full">
+              {isSubmitting && <Loader2 className="animate-spin mr-2"/>}Create Project
             </Button>
           </form>
         </div>
