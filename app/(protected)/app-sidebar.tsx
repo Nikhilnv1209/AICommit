@@ -39,7 +39,20 @@ const AppSidebar = () => {
     <Sidebar collapsible="icon" variant="floating">
       <SidebarHeader>
         <div className="flex items-center gap-2">
-          <Image src="/logo.png" width={48} height={48} alt="logo" />
+          <Image
+            src="/logo-dark.png"
+            width={32}
+            height={32}
+            alt="logo"
+            className="dark:hidden block"
+          />
+          <Image
+            src="/logo-light.png"
+            width={32}
+            height={32}
+            alt="logo"
+            className="hidden dark:block"
+          />
           {open && (
             <h1 className="text-xl font-bold text-primary/80">
               AICommit
