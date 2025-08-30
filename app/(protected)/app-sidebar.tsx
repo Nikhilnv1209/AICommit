@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { Bot, CreditCard, LayoutDashboard, Plus, Presentation } from "lucide-react"
 import Image from "next/image";
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname } from "next/navigation";
 
 const items = [
   {
@@ -60,7 +60,13 @@ const AppSidebar = () => {
                   return (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild>
-                        <Link href={item.url} className={cn({ "!bg-primary !text-white": pathname === item.url }, "list-none")}>
+                        <Link
+                          href={item.url}
+                          className={cn(
+                            { "!bg-primary !text-primary-foreground": pathname === item.url },
+                            "list-none"
+                          )}
+                        >
                           <item.icon />
                           <span>
                             {item.title}
@@ -87,12 +93,14 @@ const AppSidebar = () => {
                     <SidebarMenuItem key={project.name}>
                       <SidebarMenuButton asChild>
                         <div className="cursor-pointer" onClick={() => setProjectId(project.id)}>
-                          <div className={cn(
-                            "rounded-sm border size-6 flex items-center justify-center text-sm bg-white text-primary",
-                            {
-                              "bg-primary text-white": project.id === projectId
-                            }
-                          )}>
+                          <div
+                            className={cn(
+                              "rounded-sm border size-6 flex items-center justify-center text-sm bg-muted text-foreground",
+                              {
+                                "bg-primary text-primary-foreground": project.id === projectId,
+                              }
+                            )}
+                          >
                             {project.name[0]}
                           </div>
                           <span>{project.name}</span>

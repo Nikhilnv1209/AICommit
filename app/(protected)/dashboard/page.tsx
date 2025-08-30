@@ -15,11 +15,11 @@ const DashBoard = () => {
         {/* GitHub link */}
         <div className='w-fit rounded-md bg-primary px-4 py-3'>
           <div className="flex items-center">
-            <Github className='text-white size-5' />
+            <Github className='text-primary-foreground size-5' />
             <div className="ml-2">
-              <p className='text-sm font-medium text-white'>
+              <p className='text-sm font-medium text-primary-foreground'>
                 This Project is linked to {' '}
-                <Link href={project?.githubUrl || ''} className='inline-flex items-center text-white/80 hover:underline'>
+                <Link href={project?.githubUrl || ''} className='inline-flex items-center text-primary-foreground/80 hover:underline'>
                   {project?.githubUrl}
                   <ExternalLinkIcon className='ml-1 size-4' />
                 </Link>

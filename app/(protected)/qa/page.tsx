@@ -7,9 +7,11 @@ import AskQuestionsCard from "../dashboard/ask-questions-card";
 import React, { useState } from "react";
 import MDEditor from "@uiw/react-md-editor";
 import CodeReferences from "../dashboard/code-references";
+import { useTheme } from "next-themes";
 
 const QAPage = () => {
   const { projectId } = useProject();
+  const { resolvedTheme } = useTheme();
   const [questionIndex, setquestionIndex] = useState<number>(0)
   
   const { data: questions } = useQuery({
@@ -32,19 +34,19 @@ const QAPage = () => {
         {questions?.map((question, index) =>
           <React.Fragment key={question.id}>
             <SheetTrigger onClick={() => setquestionIndex(index)}>
-              <div className="flex items-center gap-4 bg-white rounded-lg p-3 shadow border">
+              <div className="flex items-center gap-4 bg-card text-card-foreground rounded-lg p-3 shadow border border-border">
                 <img className="rounded-full object-contain" height={32} width={32} src={question.user.imageUrl ?? ""}/>
 
                 <div className="flex flex-col text-left">
                   <div className="flex items-center gap-2">
-                    <p className="text-gray-700 line-clamp-1 font-medium">
+                    <p className="text-foreground line-clamp-1 font-medium">
                       {question.question}
                     </p>
-                    <span className="text-xs text-gray-400 whitespace-nowrap">
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
                       {question.createdAt.toLocaleDateString()}
                     </span>
                   </div>
-                  <p className="text-gray-700 line-clamp-1 text-sm">
+                  <p className="text-muted-foreground line-clamp-1 text-sm">
                       {question.answer}
                     </p>
                 </div>
@@ -61,8 +63,8 @@ const QAPage = () => {
               <SheetTitle>
                 {question.question}
               </SheetTitle>
-              <div data-color-mode="light">
-              <MDEditor.Markdown source={question.answer}/>
+              <div data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}>
+                <MDEditor.Markdown source={question.answer}/>
               </div>
               <CodeReferences fileReferences={(question.fileReferences ?? []) as any} />
             </SheetHeader>

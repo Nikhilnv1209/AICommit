@@ -18,13 +18,13 @@ const CommitSkeleton = ({ isLast }: {isLast: boolean}) => (
         "absolute left-0 top-0 w-8 flex justify-center"
       )}
     >
-      <div className="w-px bg-gray-200"></div>
+      <div className="w-px bg-border"></div>
     </div>
-    <div className="relative mt-4 size-8 rounded-full bg-gray-200 animate-pulse"></div>
-    <div className="flex-auto rounded-md bg-white p-3 ring-1 ring-inset ring-gray-200 space-y-2">
-      <div className="h-4 w-3/4 bg-gray-200 rounded animate-pulse"></div>
-      <div className="h-4 w-1/2 bg-gray-200 rounded animate-pulse"></div>
-      <div className="h-16 w-full bg-gray-200 rounded animate-pulse"></div>
+    <div className="relative mt-4 size-8 rounded-full bg-muted animate-pulse"></div>
+    <div className="flex-auto rounded-md bg-card p-3 ring-1 ring-inset ring-border space-y-2">
+      <div className="h-4 w-3/4 bg-muted rounded animate-pulse"></div>
+      <div className="h-4 w-1/2 bg-muted rounded animate-pulse"></div>
+      <div className="h-16 w-full bg-muted rounded animate-pulse"></div>
     </div>
   </li>
 );
@@ -81,23 +81,23 @@ const CommitLogs = () => {
               "absolute left-0 top-0 w-8 flex justify-center"
             )}
           >
-            <div className="w-px bg-gray-300"></div>
+            <div className="w-px bg-border"></div>
           </div>
           <Image
             src={commit.commitAuthorAvatar}
             alt={commit.commitAuthorName}
             width={128}
             height={128}
-            className="relative mt-4 size-8 flex-none rounded-full bg-gray-50"
+            className="relative mt-4 size-8 flex-none rounded-full bg-muted"
           />
-          <div className="flex-auto rounded-md bg-white p-3 ring-1 ring-inset ring-gray-200">
+          <div className="flex-auto rounded-md bg-card p-3 ring-1 ring-inset ring-border">
             <div className="flex justify-between gap-x-4">
               <Link
                 href={`${project?.githubUrl}/commit/${commit.commitHash}`}
                 target="_blank"
-                className="py-0.5 text-xs leading-5 text-gray-500"
+                className="py-0.5 text-xs leading-5 text-muted-foreground"
               >
-                <span className="font-medium text-gray-900">
+                <span className="font-medium text-foreground">
                   {commit.commitAuthorName}
                 </span>{" "}
                 <span className="inline-flex items-center">
@@ -107,7 +107,7 @@ const CommitLogs = () => {
               </Link>
             </div>
             <span className="font-semibold">{commit.commitMessage}</span>
-            <pre className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-500">
+            <pre className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
               {commit.summary}
             </pre>
           </div>

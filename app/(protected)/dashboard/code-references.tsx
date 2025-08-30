@@ -3,6 +3,8 @@ import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { lucario } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useTheme } from 'next-themes';
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 
@@ -12,6 +14,7 @@ type Props = {
 
 const CodeReferences = ({ fileReferences }: Props) => {
   const [tab, setTab] = useState<string | undefined>(undefined);
+  const { resolvedTheme } = useTheme();
 
   // Automatically select the first file reference when fileReferences changes
   useEffect(() => {
@@ -25,7 +28,7 @@ const CodeReferences = ({ fileReferences }: Props) => {
   return (
     <div className="max-w-[70vw] mt-2">
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="overflow-auto flex gap-2 bg-gray-200 p-1.5 rounded-md">
+        <div className="overflow-auto flex gap-2 bg-muted p-1.5 rounded-md">
           {fileReferences.map((file) => (
             <Button
               key={file.fileName}
@@ -49,7 +52,12 @@ const CodeReferences = ({ fileReferences }: Props) => {
             value={file.fileName}
             className="max-h-[40vh] overflow-y-auto max-w-7xl rounded-md custom-markdown-scroll"
           >
-            <SyntaxHighlighter language="typescript" style={lucario} wrapLines={true} wrapLongLines={true}>
+            <SyntaxHighlighter
+              language="typescript"
+              style={resolvedTheme === 'dark' ? lucario : oneLight}
+              wrapLines={true}
+              wrapLongLines={true}
+            >
               {file.sourceCode}
             </SyntaxHighlighter>
           </TabsContent>
