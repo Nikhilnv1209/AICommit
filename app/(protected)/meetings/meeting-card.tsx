@@ -162,9 +162,9 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) =>
   return (
     <div className="h-full w-full">
       <div className="w-full h-full flex items-center justify-center border border-sidebar-border bg-sidebar shadow rounded-lg py-5">
-        <div className="flex flex-col items-center gap-3 sm:gap-4 text-center p-4 sm:p-5">
+        <div className="flex flex-col items-center gap-3 sm:gap-4 text-center p-4 sm:p-5 w-full">
           {uploading ? (
-            <div className="flex flex-col items-center gap-3 mt-4">
+            <div className="flex flex-col items-center gap-3 mt-4 w-full">
               <CircularProgress progress={progress} />
               <p className="text-sm text-muted-foreground">
                 Uploading your meeting...

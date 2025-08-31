@@ -65,7 +65,9 @@ const MeetingPage = () => {
 
   return (
     <div className="w-full">
-      <MeetingCard onUploadComplete={handleUploadComplete} />
+      <div className="h-64">
+        <MeetingCard onUploadComplete={handleUploadComplete} />
+      </div>
       <div className="h-8"></div>
       <h1 className="text-xl font-semibold mb-4">Meetings</h1>
       <div className="flex flex-col gap-4">
@@ -75,8 +77,8 @@ const MeetingPage = () => {
           <div className="text-red-500">Error loading meetings</div>
         ) : meetings && meetings.length > 0 ? (
           meetings.map((meeting) => (
-            <Link
-              key={meeting.id}
+            <Link 
+              key={meeting.id} 
               href={`/meetings/${meeting.id}`}
               className="w-full text-left"
             >
