@@ -92,7 +92,7 @@ export async function submitCreateForm(formdata: TFormData) {
         name: result.data.projectName,
         githubUrl: result.data.repoUrl,
         githubToken: result.data.githubToken || null,
-        UserToProject: { create: { userId: userId! } },
+        userToProject: { create: { userId: userId! } },
       },
     });
 
@@ -137,7 +137,7 @@ export async function getProjects() {
 
     const projects = await prisma.project.findMany({
       where: {
-        UserToProject: {
+        userToProject: {
           some: {
             userId: userId!,
           },

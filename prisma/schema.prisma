@@ -40,10 +40,11 @@ model Project {
   githubUrl           String
   deletedAt           DateTime?
   githubToken         String?
-  UserToProject       UserToProject[]
-  Commit              Commit[]
-  SourceCodeEmbedding SourceCodeEmbedding[]
-  SavedQuestion       Question[]
+  userToProject       UserToProject[]
+  commit              Commit[]
+  sourceCodeEmbedding SourceCodeEmbedding[]
+  savedQuestions      Question[]
+  meetings            Meeting[]
 }
 
 model UserToProject {
@@ -93,12 +94,44 @@ model Question {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  question      String
-  answer        String
+  question       String
+  answer         String
   fileReferences Json?
-  projectId     String
-  project       Project @relation(fields: [projectId], references: [id])
+  projectId      String
+  project        Project @relation(fields: [projectId], references: [id])
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+}
+
+enum meetingStatus {
+  PROCESSING
+  COMPLETED
+}
+
+model Meeting {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  name      String
+
+  meetingUrl String // cloudinary url
+  projectId  String
+  project    Project       @relation(fields: [projectId], references: [id])
+  status     meetingStatus @default(PROCESSING)
+  issues     Issue[]
+}
+
+model Issue {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  start    String
+  end      String
+  headline String
+  summary  String
+
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id])
 }
