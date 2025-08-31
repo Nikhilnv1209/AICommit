@@ -36,7 +36,11 @@ export async function askQuestion(question: string, projectId: string) {
 
   let context = "";
   for (const data of result) {
-    context += `source: ${data.fileName}\n code content: ${data.sourceCode}\n summary of file: ${data.summary}\n\n`;
+    context += `source: ${data.fileName}
+ code content: ${data.sourceCode}
+ summary of file: ${data.summary}
+
+`;
   }
 
   (async () => {
@@ -289,4 +293,111 @@ export async function uploadFileToCloudinary(
     progress: progress.value,
     result,
   };
+}
+
+// Meeting actions
+export async function createMeeting(projectId: string, name: string, meetingUrl: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+    
+    // Verify user has access to the project
+    const project = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        userToProject: {
+          some: {
+            userId: userId,
+          },
+        },
+      },
+    });
+    
+    if (!project) throw new Error("Project not found or access denied.");
+    
+    // Create the meeting with PROCESSING status by default
+    const meeting = await prisma.meeting.create({
+      data: {
+        name,
+        meetingUrl,
+        projectId,
+        status: "PROCESSING",
+      },
+    });
+    
+    return { success: true, meeting };
+  } catch (error: any) {
+    console.error("Error creating meeting:", error);
+    return { success: false, error: error.message || "Failed to create meeting." };
+  }
+}
+
+export async function getMeetings(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+    
+    // Verify user has access to the project
+    const project = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        userToProject: {
+          some: {
+            userId: userId,
+          },
+        },
+      },
+    });
+    
+    if (!project) throw new Error("Project not found or access denied.");
+    
+    // Get all meetings for the project
+    const meetings = await prisma.meeting.findMany({
+      where: {
+        projectId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      include: {
+        issues: true,
+      },
+    });
+    
+    return { success: true, meetings };
+  } catch (error: any) {
+    console.error("Error fetching meetings:", error);
+    return { success: false, error: error.message || "Failed to fetch meetings." };
+  }
+}
+
+export async function getMeetingById(meetingId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+    
+    // Get the meeting and verify user has access to its project
+    const meeting = await prisma.meeting.findFirst({
+      where: {
+        id: meetingId,
+        project: {
+          userToProject: {
+            some: {
+              userId: userId,
+            },
+          },
+        },
+      },
+      include: {
+        issues: true,
+      },
+    });
+    
+    if (!meeting) throw new Error("Meeting not found or access denied.");
+    
+    return { success: true, meeting };
+  } catch (error: any) {
+    console.error("Error fetching meeting:", error);
+    return { success: false, error: error.message || "Failed to fetch meeting." };
+  }
 }

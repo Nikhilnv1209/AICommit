@@ -5,7 +5,7 @@ import { ExternalLinkIcon, Github } from "lucide-react";
 import Link from "next/link";
 import CommitLogs from "./commit-logs";
 import AskQuestionsCard from "./ask-questions-card";
-import MeetingCard from "../meeting/page";
+import MeetingCard from "../meetings/meeting-card";
 
 const DashBoard = () => {
   const { project } = useProject();
