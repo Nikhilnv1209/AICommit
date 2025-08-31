@@ -2,14 +2,13 @@
 import { Button } from "@/components/ui/button";
 import { Presentation, Upload } from "lucide-react";
 import React, { useRef, useState } from "react";
-import { readStreamableValue } from "ai/rsc";
-import { uploadFileToCloudinary } from "@/app/actions";
 
 const MeetingCard = () => {
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const onPickFile = () => inputRef.current?.click();
@@ -17,23 +16,70 @@ const MeetingCard = () => {
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setError(null);
+
+    const isMp3 = file.type === "audio/mpeg" || file.name.toLowerCase().endsWith(".mp3");
+    if (!isMp3) {
+      setUploading(false);
+      setProgress(0);
+      setUrl(null);
+      setFileName("");
+      setError("Only MP3 files are supported.");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     setFileName(file.name);
     setUrl(null);
     setProgress(0);
     setUploading(true);
 
     try {
-      const { progress: stream, result } = await uploadFileToCloudinary(file, {
-        folder: "meetings",
-        resource_type: "auto",
+      // 1) Ask server for a signed payload (no file sent to server)
+      const signRes = await fetch("/api/cloudinary/sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: "meetings", resource_type: "auto" }),
+      });
+      if (!signRes.ok) throw new Error("Failed to get Cloudinary signature");
+      const { timestamp, folder, resource_type, apiKey, cloudName, signature } = await signRes.json();
+
+      // 2) Upload directly to Cloudinary with progress via XHR
+      const form = new FormData();
+      form.append("file", file);
+      form.append("api_key", apiKey);
+      form.append("timestamp", String(timestamp));
+      form.append("signature", signature);
+      form.append("folder", folder);
+
+      const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resource_type}/upload`;
+
+      const xhr = new XMLHttpRequest();
+      const done: Promise<any> = new Promise((resolve, reject) => {
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable) {
+            const pct = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
+            setProgress(pct);
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const json = JSON.parse(xhr.responseText);
+              resolve(json);
+            } catch (e) {
+              reject(e);
+            }
+          } else {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error("Network error during upload"));
       });
 
-      for await (const pct of readStreamableValue(stream)) {
-        if (typeof pct === "number") setProgress(pct);
-      }
-
-      const res = await result;
-      setUrl(res.secure_url);
+      xhr.open("POST", uploadUrl);
+      xhr.send(form);
+      const json = await done;
+      setUrl(json.secure_url as string);
       setProgress(100);
     } catch (err) {
       console.error(err);
@@ -58,7 +104,7 @@ const MeetingCard = () => {
           <input
             ref={inputRef}
             type="file"
-            accept="audio/*,video/*,.mp3,.wav,.m4a,.mp4,.mov,.mkv,.webm,.ogg,.aac,.flac,.avi"
+            accept=".mp3,audio/mpeg"
             className="hidden"
             onChange={onFileChange}
           />
@@ -69,6 +115,12 @@ const MeetingCard = () => {
               {uploading ? "Uploading..." : "Upload Meeting"}
             </span>
           </Button>
+
+          {error && (
+            <div className="w-full mt-2 text-xs sm:text-sm text-red-500">
+              {error}
+            </div>
+          )}
 
           {(uploading || progress > 0) && (
             <div className="w-full mt-2">
