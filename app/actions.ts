@@ -8,6 +8,9 @@ import { aiGenerateEmbeddings } from './../lib/gemini';
 import { streamText } from "ai";
 import { createStreamableValue } from "ai/rsc";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import cloudinary from "@/lib/cloudinary";
+import { Readable, Transform } from "node:stream";
+import type { UploadApiResponse } from "cloudinary";
 
 const pollingProjects = new Set<string>();
 
@@ -231,4 +234,59 @@ export async function getQuestions(projectId: string) {
     console.log("Error:", error);
     return null;
   }
+}
+
+// Cloudinary upload with streamed progress updates
+export async function uploadFileToCloudinary(
+  file: File,
+  opts?: { folder?: string; resource_type?: "image" | "video" | "raw" | "auto" }
+) {
+  const progress = createStreamableValue<number>(0);
+
+  const { folder = "uploads", resource_type = "auto" } = opts || {};
+
+  // Wrap upload in a promise and stream progress as the file is piped
+  const result: Promise<UploadApiResponse> = new Promise((resolve, reject) => {
+    try {
+      const totalSize = (file as any).size ? Number((file as any).size) : 0;
+      let sent = 0;
+
+      const meter = new Transform({
+        transform(chunk, _enc, cb) {
+          sent += (chunk as Buffer).length;
+          if (totalSize > 0) {
+            const pct = Math.min(99, Math.floor((sent / totalSize) * 100));
+            progress.update(pct);
+          }
+          this.push(chunk);
+          cb();
+        },
+      });
+
+      const upload = cloudinary.uploader.upload_stream(
+        { folder, resource_type },
+        (error, res) => {
+          if (error || !res) {
+            progress.error(new Error("Cloudinary upload failed"));
+            return reject(error || new Error("No response from Cloudinary"));
+          }
+          progress.update(100);
+          progress.done();
+          resolve(res as UploadApiResponse);
+        }
+      );
+
+      // Convert the web ReadableStream from File to a Node stream and pipe
+      const nodeReadable = Readable.fromWeb(file.stream() as any);
+      nodeReadable.pipe(meter).pipe(upload);
+    } catch (err) {
+      progress.error(new Error("Upload initialization failed"));
+      reject(err);
+    }
+  });
+
+  return {
+    progress: progress.value,
+    result,
+  };
 }
