@@ -4,16 +4,13 @@ import { Presentation, Upload } from "lucide-react";
 import React, { useRef, useState } from "react";
 import { createMeeting } from "@/app/actions";
 import useProject from "@/hooks/use-project";
-import { useRouter } from "next/navigation";
 
-const MeetingCard = () => {
+const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) => {
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [fileName, setFileName] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [uploadComplete, setUploadComplete] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const router = useRouter();
 
   // Get project context
   const { project } = useProject();
@@ -37,7 +34,6 @@ const MeetingCard = () => {
     setFileName(file.name);
     setProgress(0);
     setUploading(true);
-    setUploadComplete(false);
 
     try {
       // 1) Ask server for a signed payload (no file sent to server)
@@ -90,13 +86,17 @@ const MeetingCard = () => {
       if (project?.id) {
         const result = await createMeeting(project.id, file.name, json.secure_url);
         if (result.success) {
-          // Mark upload as complete
-          setUploadComplete(true);
-          setUploading(false);
+          // Call the upload complete callback
+          if (onUploadComplete) {
+            onUploadComplete();
+          }
 
-          // Show success state briefly, then redirect
+          // Reset to initial state after successful upload
           setTimeout(() => {
-            router.push("/meetings");
+            setUploading(false);
+            setFileName("");
+            setProgress(0);
+            if (inputRef.current) inputRef.current.value = "";
           }, 1000);
         } else {
           setError(result.error || "Failed to save meeting to database");
@@ -161,13 +161,13 @@ const MeetingCard = () => {
 
   return (
     <div className="h-full w-full">
-      <div className="w-full h-full flex items-center justify-center border border-sidebar-border bg-sidebar shadow rounded-lg py-5 sm:py-0">
+      <div className="w-full h-full flex items-center justify-center border border-sidebar-border bg-sidebar shadow rounded-lg py-5">
         <div className="flex flex-col items-center gap-3 sm:gap-4 text-center p-4 sm:p-5">
-          {uploading || uploadComplete ? (
+          {uploading ? (
             <div className="flex flex-col items-center gap-3 mt-4">
               <CircularProgress progress={progress} />
               <p className="text-sm text-muted-foreground">
-                {uploadComplete ? "Upload complete!" : "Uploading your meeting..."}
+                Uploading your meeting...
               </p>
               <p className="text-xs text-muted-foreground truncate max-w-full" title={fileName}>
                 {fileName || "Preparing..."}
