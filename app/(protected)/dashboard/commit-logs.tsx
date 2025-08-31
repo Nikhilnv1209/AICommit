@@ -52,8 +52,6 @@ const CommitLogs = () => {
     refetchOnWindowFocus: false,
   });
 
-  console.log(commits)
-
   // Show skeleton loader during initial fetch
   if (status === "pending") {
     return <SkeletonLoader />;

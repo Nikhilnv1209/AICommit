@@ -1,25 +1,26 @@
 /* Target the custom class applied to MDEditor.Markdown */
+/* Theme-aware, subtle custom scrollbar used by markdown and code references */
 .custom-markdown-scroll::-webkit-scrollbar {
-  width: 8px; /* Slimmer scrollbar */
+  width: 8px;
   height: 8px;
 }
 
 .custom-markdown-scroll::-webkit-scrollbar-track {
-  background: #f1f1f1; /* Light track background */
+  background: hsl(var(--muted));
   border-radius: 4px;
 }
 
 .custom-markdown-scroll::-webkit-scrollbar-thumb {
-  background: #888; /* Modern gray thumb */
+  background: hsl(var(--muted-foreground));
   border-radius: 4px;
 }
 
 .custom-markdown-scroll::-webkit-scrollbar-thumb:hover {
-  background: #555; /* Darker on hover for interactivity */
+  background: hsl(var(--foreground));
 }
 
-/* Optional: Firefox scrollbar styling */
+/* Firefox */
 .custom-markdown-scroll {
-  scrollbar-width: thin; /* Slim scrollbar */
-  scrollbar-color: #888 #f1f1f1; /* Thumb and track colors */
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted));
 }

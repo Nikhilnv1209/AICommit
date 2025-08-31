@@ -15,9 +15,11 @@ import CodeReferences from "./code-references";
 import { toast } from "sonner";
 import { getQueryClient } from "@/lib/react-query";
 import { cn } from "@/lib/utils";
+import { useTheme } from "next-themes";
 
 const AskQuestionsCard = () => {
   const { project } = useProject();
+  const { resolvedTheme } = useTheme();
   const [question, setQuestion] = useState('');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -108,7 +110,7 @@ const AskQuestionsCard = () => {
   return (
     <>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[70vw] max-h-[90vh] flex flex-col">
+        <DialogContent className="sm:max-w-[70vw] max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader className="flex-shrink-0">
             <div className="flex items-center gap-2">
               <DialogTitle>
@@ -132,13 +134,18 @@ const AskQuestionsCard = () => {
               </Button>
             </div>
           </DialogHeader>
-          <div className="flex-grow overflow-y-auto">
-            <div data-color-mode="light" className="w-full max-h-[60vh] overflow-y-auto break-words py-4 px-2 custom-markdown-scroll">
+          <div className="flex-grow overflow-y-auto overflow-x-hidden">
+            <div 
+              data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}
+              className="prose prose-sm sm:prose-base max-w-none py-4 px-2"
+            >
               <MDEditor.Markdown
                 source={answer}
-                className="w-full overflow-y-auto break-words py-4 px-2 custom-markdown-scroll"
+                className="!bg-transparent !text-foreground !max-h-none !overflow-visible [&_pre]:!bg-muted/40 [&_pre]:!text-foreground [&_pre]:!border [&_code]:!text-foreground"
               />
-              <CodeReferences fileReferences={fileReferences || []} />
+              <div className="mt-6">
+                <CodeReferences fileReferences={fileReferences || []} />
+              </div>
             </div>
           </div>
           <div className="flex-shrink-0 mt-4">
