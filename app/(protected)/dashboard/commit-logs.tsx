@@ -4,14 +4,15 @@ import { getProjectCommits } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Calendar, GitCommit } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import React from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Skeleton component for a single commit item
 const CommitSkeleton = ({ isLast }: {isLast: boolean}) => (
-  <li className="relative flex gap-x-4">
+  <li className="relative flex gap-x-4 pr-8 md:pr-0 min-w-0">
     <div
       className={cn(
         isLast ? "h-6" : "-bottom-6",
@@ -51,6 +52,8 @@ const CommitLogs = () => {
     refetchOnWindowFocus: false,
   });
 
+  console.log(commits)
+
   // Show skeleton loader during initial fetch
   if (status === "pending") {
     return <SkeletonLoader />;
@@ -72,9 +75,9 @@ const CommitLogs = () => {
 
   // Render the commit list when data is successfully fetched
   return (
-    <ul className="space-y-6">
+    <ul className="space-y-6 overflow-x-hidden">
       {commits.map((commit, commitIndex) => (
-        <li key={commit.id} className="relative flex gap-x-4">
+        <li key={commit.id} className="relative flex gap-x-4 pr-8 md:pr-0 min-w-0">
           <div
             className={cn(
               commitIndex === commits.length - 1 ? "h-6" : "-bottom-6",
@@ -83,14 +86,36 @@ const CommitLogs = () => {
           >
             <div className="w-px bg-border"></div>
           </div>
-          <Image
-            src={commit.commitAuthorAvatar}
-            alt={commit.commitAuthorName}
-            width={128}
-            height={128}
-            className="relative mt-4 size-8 flex-none rounded-full bg-muted"
-          />
-          <div className="flex-auto rounded-md bg-card p-3 ring-1 ring-inset ring-border">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Image
+                  src={commit.commitAuthorAvatar}
+                  alt={commit.commitAuthorName}
+                  width={128}
+                  height={128}
+                  className="relative mt-4 size-8 flex-none rounded-full bg-muted"
+                />
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs break-words">
+                <div className="text-primary-foreground">
+                  <div className="font-medium">{commit.commitAuthorName}</div>
+                  <div className="mt-1 flex items-center gap-1 text-xs opacity-90">
+                    <Calendar className="size-3" />
+                    <span>{new Date(commit.commitDate).toLocaleString()}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1 text-xs opacity-90">
+                    <GitCommit className="size-3" />
+                    <span className="truncate">{commit.commitHash}</span>
+                  </div>
+                  <div className="mt-2 text-xs opacity-90 line-clamp-4 whitespace-pre-wrap">
+                    {commit.commitMessage}
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <div className="flex-auto rounded-md bg-card p-3 ring-1 ring-inset ring-border min-w-0">
             <div className="flex flex-wrap justify-between gap-x-4 gap-y-2">
               <Link
                 href={`${project?.githubUrl}/commit/${commit.commitHash}`}
