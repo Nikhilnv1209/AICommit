@@ -4,7 +4,7 @@ import { getMeetings } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { useQuery } from "@tanstack/react-query";
 import MeetingCard from "./meeting-card";
-import { Calendar, Clock, FileAudio } from "lucide-react";
+import { FileAudio, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 
@@ -77,8 +77,8 @@ const MeetingPage = () => {
           <div className="text-red-500">Error loading meetings</div>
         ) : meetings && meetings.length > 0 ? (
           meetings.map((meeting) => (
-            <Link 
-              key={meeting.id} 
+            <Link
+              key={meeting.id}
               href={`/meetings/${meeting.id}`}
               className="w-full text-left"
             >
@@ -88,18 +88,25 @@ const MeetingPage = () => {
                 </div>
                 <div className="flex flex-col text-left flex-grow min-w-0">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <p className="text-foreground font-medium line-clamp-2">
-                      {meeting.name}
-                    </p>
+                    <div className="flex items-center justify-center gap-2 min-w-0">
+                      <p className="text-foreground font-medium line-clamp-2">
+                        {meeting.name}
+                      </p>
+                      {meeting.status === "PROCESSING" && (
+                        <span className="inline-flex items-center gap-1 text-[10px] md:text-xs px-1.5 py-0.5 rounded-lg border bg-yellow-600/70">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Processing
+                        </span>
+                      )}
+                    </div>
                     <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
                       {new Date(meeting.createdAt).toLocaleDateString()}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="flex items-center text-xs text-muted-foreground">
-                      <Clock size={12} className="mr-1" />
-                      {meeting.status}
-                    </div>
+                  <div className="mt-1">
+                    <span className="text-xs text-muted-foreground">
+                      {(meeting.issues?.length ?? 0)} issues
+                    </span>
                   </div>
                 </div>
               </div>
