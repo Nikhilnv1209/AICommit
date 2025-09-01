@@ -5,9 +5,10 @@ import React, { useRef, useState } from "react";
 import { createMeeting } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 
-const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) => {
+const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<void> }) => {
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "upload" | "saving">("idle");
   const [fileName, setFileName] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -34,6 +35,7 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) =>
     setFileName(file.name);
     setProgress(0);
     setUploading(true);
+    setPhase("upload");
 
     try {
       // 1) Ask server for a signed payload (no file sent to server)
@@ -56,7 +58,7 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) =>
       const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resource_type}/upload`;
 
       const xhr = new XMLHttpRequest();
-      const done: Promise<any> = new Promise((resolve, reject) => {
+      const done: Promise<{ secure_url: string }> = new Promise((resolve, reject) => {
         xhr.upload.onprogress = (evt) => {
           if (evt.lengthComputable) {
             const pct = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
@@ -84,29 +86,49 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) =>
 
       // Save meeting info to database
       if (project?.id) {
+        setPhase("saving");
         const result = await createMeeting(project.id, file.name, json.secure_url);
-        if (result.success) {
-          // Call the upload complete callback
+        if (result.success && result.meeting) {
+          // Call the upload complete callback to refresh the meetings list
           if (onUploadComplete) {
-            onUploadComplete();
+            // Await the parent refresh so loader hides after list updates
+            try {
+              await onUploadComplete();
+            } catch (_) {}
           }
 
-          // Reset to initial state after successful upload
-          setTimeout(() => {
-            setUploading(false);
-            setFileName("");
-            setProgress(0);
-            if (inputRef.current) inputRef.current.value = "";
-          }, 1000);
+          // Process the meeting with AssemblyAI in the background (fire and forget)
+          fetch("/api/meeting/process", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              meetingUrl: json.secure_url,
+              meetingId: result.meeting.id,
+              projectId: project.id,
+            }),
+          }).catch((processError) => {
+            console.error("Error processing meeting:", processError);
+            // We don't want to stop the upload flow if processing fails
+            // The meeting is still uploaded and saved to the database
+          });
+
+          // Reset to initial state after meetings list refresh (or immediately if no callback)
+          setUploading(false);
+          setPhase("idle");
+          setFileName("");
+          setProgress(0);
+          if (inputRef.current) inputRef.current.value = "";
         } else {
           setError(result.error || "Failed to save meeting to database");
           setUploading(false);
+          setPhase("idle");
         }
       }
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Upload failed");
       setUploading(false);
+      setPhase("idle");
     }
   };
 
@@ -167,7 +189,7 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) =>
             <div className="flex flex-col items-center gap-3 mt-4 w-full">
               <CircularProgress progress={progress} />
               <p className="text-sm text-muted-foreground">
-                Uploading your meeting...
+                {phase === "upload" ? "Uploading your meeting..." : "Finalizing and refreshing..."}
               </p>
               <p className="text-xs text-muted-foreground truncate max-w-full" title={fileName}>
                 {fileName || "Preparing..."}
@@ -194,7 +216,7 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => void }) =>
               <Button onClick={onPickFile} disabled={uploading} className="w-full sm:w-auto">
                 <span className="flex items-center gap-2 px-2 py-1.5 sm:px-4 sm:py-2">
                   <Upload className={uploading ? "animate-pulse" : ""} size={18} />
-                  {uploading ? "Uploading..." : "Upload Meeting"}
+                  {uploading ? (phase === "upload" ? "Uploading..." : "Finalizing...") : "Upload Meeting"}
                 </span>
               </Button>
 

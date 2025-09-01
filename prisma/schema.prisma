@@ -45,6 +45,7 @@ model Project {
   sourceCodeEmbedding SourceCodeEmbedding[]
   savedQuestions      Question[]
   meetings            Meeting[]
+  Issue               Issue[]
 }
 
 model UserToProject {
@@ -131,7 +132,10 @@ model Issue {
   end      String
   headline String
   summary  String
+  gist     String
 
   meetingId String
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
   meeting   Meeting @relation(fields: [meetingId], references: [id])
 }

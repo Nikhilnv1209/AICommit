@@ -45,10 +45,10 @@ const MeetingPage = () => {
   });
 
   // Handle upload completion
-  const handleUploadComplete = () => {
+  const handleUploadComplete = async () => {
     setUploadComplete(true);
-    // Refetch meetings after upload
-    refetch();
+    // Refetch meetings after upload and await completion
+    await refetch();
   };
 
   // Reset upload complete status after a short delay
