@@ -197,6 +197,57 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
   }
 }
 
+// Paginated commits (cursor-based)
+export async function getProjectCommitsPage(
+  projectId: string,
+  opts?: { limit?: number; cursor?: string | null; githubUrl?: string }
+) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const limit = Math.max(1, Math.min(50, opts?.limit ?? 10));
+    const cursor = opts?.cursor ?? null;
+
+    // Kick off background polling on first page only (no cursor), same as getProjectCommits
+    if (!cursor && opts?.githubUrl && !pollingProjects.has(projectId)) {
+      pollingProjects.add(projectId);
+      Promise.resolve().then(async () => {
+        try {
+          await pollCommits(projectId, opts.githubUrl!);
+        } catch (e) {
+          const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
+          console.error("Error polling commits in background:", errorDetails);
+        } finally {
+          pollingProjects.delete(projectId);
+        }
+      });
+    }
+
+    const commits = await prisma.commit.findMany({
+      where: { projectId },
+      orderBy: { commitDate: "desc" },
+      take: limit + 1,
+      ...(cursor
+        ? { cursor: { id: cursor }, skip: 1 } // skip the cursor item itself
+        : {}),
+    });
+
+    let nextCursor: string | null = null;
+    let items = commits;
+    if (commits.length > limit) {
+      const next = commits[limit];
+      nextCursor = next.id;
+      items = commits.slice(0, limit);
+    }
+
+    return { items, nextCursor };
+  } catch (error) {
+    console.log("Error:", error);
+    return { items: [], nextCursor: null };
+  }
+}
+
 export async function saveQuestion(projectId: string, question: string, answer:string, fileReferences: any) {
   try {
     const { userId } = await auth();

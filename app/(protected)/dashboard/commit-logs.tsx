@@ -1,14 +1,16 @@
 "use client";
 
-import { getProjectCommits } from "@/app/actions";
+import { getProjectCommitsPage } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { ExternalLink, Calendar, GitCommit } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+type CommitsPage = { items: any[]; nextCursor: string | null };
 
 // Skeleton component for a single commit item
 const CommitSkeleton = ({ isLast }: {isLast: boolean}) => (
@@ -42,39 +44,92 @@ const SkeletonLoader = () => (
 const CommitLogs = () => {
   const { projectId, project } = useProject();
 
-  const { data: commits, status, error } = useQuery({
-    queryKey: ["projectCommits", projectId],
-    queryFn: async () => {
-      if (!projectId) return [];
-      return await getProjectCommits(projectId, project?.githubUrl);
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery<CommitsPage, Error, CommitsPage, [string, string], string | null>({
+    queryKey: ["projectCommits", projectId ?? ""],
+    queryFn: async ({ pageParam }) => {
+      if (!projectId) return { items: [], nextCursor: null };
+      return await getProjectCommitsPage(projectId, {
+        limit: 10,
+        cursor: (pageParam as string | null) ?? null,
+        githubUrl: project?.githubUrl,
+      });
     },
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    initialPageParam: null,
+    enabled: !!projectId,
     refetchOnWindowFocus: false,
+    staleTime: 1000 * 60 * 5,
   });
 
-  // Show skeleton loader during initial fetch
-  if (status === "pending") {
-    return <SkeletonLoader />;
-  }
+  // Ensure server and client render the same initial markup to avoid hydration mismatches
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-  // Handle fetch errors
-  if (status === "error") {
-    return (
-      <div className="text-red-500">
-        Error fetching commits: {error.message}
-      </div>
-    );
-  }
+  const commits: any[] = ((data as any)?.pages as CommitsPage[] | undefined)?.flatMap((p) => p.items) ?? [];
 
-  // Handle case where no commits are returned
-  if (commits.length === 0) {
-    return <div>No commits found.</div>;
-  }
+  // IntersectionObserver sentinel for infinite loading
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!mounted) return;
+    if (!sentinelRef.current) return;
+    if (!hasNextPage) return;
+
+    const node = sentinelRef.current;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          fetchNextPage();
+        }
+      }
+    }, { rootMargin: "200px" });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [mounted, hasNextPage, fetchNextPage]);
+
+  const fmtDate = (d: string | Date) => new Date(d).toLocaleString("en-US", { timeZone: "UTC" });
 
   // Render the commit list when data is successfully fetched
   return (
     <ul className="space-y-6 overflow-x-hidden">
-      {commits.map((commit, commitIndex) => (
+      {/* Pre-hydration placeholder to keep SSR/CSR markup identical */}
+      {!mounted && (
+        <>
+          {Array.from({ length: 3 }).map((_, index) => (
+            <CommitSkeleton key={index} isLast={index === 2} />
+          ))}
+        </>
+      )}
+
+      {/* Loading state */}
+      {mounted && isLoading && (
+        <>
+          {Array.from({ length: 3 }).map((_, index) => (
+            <CommitSkeleton key={index} isLast={index === 2} />
+          ))}
+        </>
+      )}
+
+      {/* Error state */}
+      {mounted && isError && !isLoading && (
+        <li className="text-red-500">Error fetching commits: {error?.message}</li>
+      )}
+
+      {/* Empty state */}
+      {mounted && !isLoading && !isError && commits.length === 0 && (
+        <li>No commits found.</li>
+      )}
+
+      {/* Data items */}
+      {mounted && commits.map((commit: any, commitIndex: number) => (
         <li key={commit.id} className="relative flex gap-x-4 pr-8 md:pr-0 min-w-0">
           <div
             className={cn(
@@ -100,7 +155,7 @@ const CommitLogs = () => {
                   <div className="font-medium">{commit.commitAuthorName}</div>
                   <div className="mt-1 flex items-center gap-1 text-xs opacity-90">
                     <Calendar className="size-3" />
-                    <span>{new Date(commit.commitDate).toLocaleString()}</span>
+                    <span>{fmtDate(commit.commitDate)}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-1 text-xs opacity-90">
                     <GitCommit className="size-3" />
@@ -136,6 +191,14 @@ const CommitLogs = () => {
           </div>
         </li>
       ))}
+      {/* Infinite loader sentinel */}
+      <li>
+        <div ref={sentinelRef} />
+        {isFetchingNextPage && <div className="mt-2 text-xs text-muted-foreground">Loading more...</div>}
+        {!hasNextPage && commits.length > 0 && (
+          <div className="mt-2 text-xs text-muted-foreground">End of commit history</div>
+        )}
+      </li>
     </ul>
   );
 };
