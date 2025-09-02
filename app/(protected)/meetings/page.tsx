@@ -1,12 +1,23 @@
 "use client";
 
-import { getMeetings } from "@/app/actions";
+import { deleteMeeting, getMeetings } from "@/app/actions";
 import useProject from "@/hooks/use-project";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import MeetingCard from "./meeting-card";
-import { FileAudio, Loader2 } from "lucide-react";
+import { FileAudio, Loader2, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 // Skeleton component for a single meeting item
 const MeetingSkeleton = () => (
@@ -44,6 +55,21 @@ const MeetingPage = () => {
     enabled: !!projectId,
   });
 
+  const { mutate: deleteMutation, isPending: isDeleting } = useMutation({
+    mutationFn: deleteMeeting,
+    onSuccess: () => {
+      toast.success("Meeting deleted successfully");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const handleDelete = (meetingId: string) => {
+    deleteMutation(meetingId);
+  };
+
   // Handle upload completion
   const handleUploadComplete = async () => {
     setUploadComplete(true);
@@ -77,12 +103,11 @@ const MeetingPage = () => {
           <div className="text-red-500">Error loading meetings</div>
         ) : meetings && meetings.length > 0 ? (
           meetings.map((meeting) => (
-            <Link
-              key={meeting.id}
-              href={`/meetings/${meeting.id}`}
-              className="w-full text-left"
-            >
-              <div className="flex items-start gap-3 bg-card text-card-foreground rounded-lg p-3 shadow border border-border w-full hover:bg-accent transition-colors">
+            <div key={meeting.id} className="flex items-center gap-3 bg-card text-card-foreground rounded-lg p-3 shadow border border-border w-full hover:bg-accent transition-colors">
+              <Link
+                href={`/meetings/${meeting.id}`}
+                className="w-full text-left flex items-start gap-3 rounded-lg"
+              >
                 <div className="rounded-full bg-primary/10 p-2 mt-1">
                   <FileAudio className="text-primary" size={20} />
                 </div>
@@ -99,18 +124,39 @@ const MeetingPage = () => {
                         </span>
                       )}
                     </div>
+                  </div>
+                  <div className="mt-1 flex items-center gap-4">
                     <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
                       {new Date(meeting.createdAt).toLocaleDateString()}
                     </span>
-                  </div>
-                  <div className="mt-1">
                     <span className="text-xs text-muted-foreground">
                       {(meeting.issues?.length ?? 0)} issues
                     </span>
                   </div>
                 </div>
-              </div>
-            </Link>
+              </Link>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="destructive" size="icon" disabled={isDeleting}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Are you sure you want to delete this meeting?</DialogTitle>
+                    <DialogDescription>
+                      This action cannot be undone. This will permanently delete the meeting and all its associated data.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline">Cancel</Button>
+                    <Button variant="destructive" onClick={() => handleDelete(meeting.id)} disabled={isDeleting}>
+                      Delete
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
           ))
         ) : (
           <div className="text-muted-foreground text-center py-8">

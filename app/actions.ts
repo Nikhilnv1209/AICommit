@@ -452,3 +452,44 @@ export async function getMeetingById(meetingId: string) {
     return { success: false, error: error.message || "Failed to fetch meeting." };
   }
 }
+
+export async function deleteMeeting(meetingId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    // Get the meeting and verify user has access to its project
+    const meeting = await prisma.meeting.findFirst({
+      where: {
+        id: meetingId,
+        project: {
+          userToProject: {
+            some: {
+              userId: userId,
+            },
+          },
+        },
+      },
+    });
+
+    if (!meeting) throw new Error("Meeting not found or access denied.");
+
+    await prisma.$transaction([
+      prisma.issue.deleteMany({
+        where: {
+          meetingId: meetingId,
+        },
+      }),
+      prisma.meeting.delete({
+        where: {
+          id: meetingId,
+        },
+      }),
+    ]);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error deleting meeting:", error);
+    return { success: false, error: error.message || "Failed to delete meeting." };
+  }
+}
