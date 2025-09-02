@@ -106,7 +106,7 @@ const MeetingPage = () => {
             <div key={meeting.id} className="flex items-center gap-3 bg-card text-card-foreground rounded-lg p-3 shadow border border-border w-full hover:bg-accent transition-colors">
               <Link
                 href={`/meetings/${meeting.id}`}
-                className="w-full text-left flex items-start gap-3 rounded-lg"
+                className="flex-grow text-left flex items-start gap-3 rounded-lg"
               >
                 <div className="rounded-full bg-primary/10 p-2 mt-1">
                   <FileAudio className="text-primary" size={20} />
@@ -135,27 +135,29 @@ const MeetingPage = () => {
                   </div>
                 </div>
               </Link>
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button variant="destructive" size="icon" disabled={isDeleting}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Are you sure you want to delete this meeting?</DialogTitle>
-                    <DialogDescription>
-                      This action cannot be undone. This will permanently delete the meeting and all its associated data.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <DialogFooter>
-                    <Button variant="outline">Cancel</Button>
-                    <Button variant="destructive" onClick={() => handleDelete(meeting.id)} disabled={isDeleting}>
-                      Delete
+              <div className="flex-shrink-0">
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button variant="destructive" size="icon" disabled={isDeleting}>
+                      <Trash2 className="h-4 w-4" />
                     </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Are you sure you want to delete this meeting?</DialogTitle>
+                      <DialogDescription>
+                        This action cannot be undone. This will permanently delete the meeting and all its associated data.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <Button variant="outline">Cancel</Button>
+                      <Button variant="destructive" onClick={() => handleDelete(meeting.id)} disabled={isDeleting}>
+                        Delete
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
           ))
         ) : (
