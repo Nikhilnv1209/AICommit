@@ -248,6 +248,37 @@ export async function getProjectCommitsPage(
   }
 }
 
+export async function archiveProject(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    // Atomically find the project by its ID and user access, and update it.
+    // This avoids a separate read query for verification.
+    const archivedProject = await prisma.project.update({
+      where: {
+        id: projectId,
+        userToProject: {
+          some: {
+            userId: userId,
+          },
+        },
+      },
+      data: {
+        deletedAt: new Date(),
+      },
+    });
+
+    return { success: true, project: archivedProject };
+  } catch (error: any) {
+    // Prisma throws an error if the record to update is not found.
+    // We can treat that as a "not found or access denied" case.
+    console.error("Error archiving project:", error);
+    return { success: false, error: "Project not found or access denied." };
+  }
+}
+
+
 export async function saveQuestion(projectId: string, question: string, answer:string, fileReferences: any) {
   try {
     const { userId } = await auth();
@@ -351,7 +382,7 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
-    
+
     // Verify user has access to the project
     const project = await prisma.project.findFirst({
       where: {
@@ -363,9 +394,9 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
         },
       },
     });
-    
+
     if (!project) throw new Error("Project not found or access denied.");
-    
+
     // Create the meeting with PROCESSING status by default
     const meeting = await prisma.meeting.create({
       data: {
@@ -375,7 +406,7 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
         status: "PROCESSING",
       },
     });
-    
+
     return { success: true, meeting };
   } catch (error: any) {
     console.error("Error creating meeting:", error);
@@ -387,25 +418,18 @@ export async function getMeetings(projectId: string) {
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
-    
-    // Verify user has access to the project
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        userToProject: {
-          some: {
-            userId: userId,
-          },
-        },
-      },
-    });
-    
-    if (!project) throw new Error("Project not found or access denied.");
-    
-    // Get all meetings for the project
+
+    // Get all meetings for the project, while also verifying user access in a single query.
     const meetings = await prisma.meeting.findMany({
       where: {
         projectId,
+        project: {
+          userToProject: {
+            some: {
+              userId: userId,
+            },
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",
@@ -414,7 +438,7 @@ export async function getMeetings(projectId: string) {
         issues: true,
       },
     });
-    
+
     return { success: true, meetings };
   } catch (error: any) {
     console.error("Error fetching meetings:", error);
@@ -426,7 +450,7 @@ export async function getMeetingById(meetingId: string) {
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
-    
+
     // Get the meeting and verify user has access to its project
     const meeting = await prisma.meeting.findFirst({
       where: {
@@ -443,9 +467,9 @@ export async function getMeetingById(meetingId: string) {
         issues: true,
       },
     });
-    
+
     if (!meeting) throw new Error("Meeting not found or access denied.");
-    
+
     return { success: true, meeting };
   } catch (error: any) {
     console.error("Error fetching meeting:", error);
@@ -458,22 +482,10 @@ export async function deleteMeeting(meetingId: string) {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
-    // Get the meeting and verify user has access to its project
-    const meeting = await prisma.meeting.findFirst({
-      where: {
-        id: meetingId,
-        project: {
-          userToProject: {
-            some: {
-              userId: userId,
-            },
-          },
-        },
-      },
-    });
-
-    if (!meeting) throw new Error("Meeting not found or access denied.");
-
+    // By performing deletes within a transaction with access control checks in the 'where' clause,
+    // we make the operation atomic and avoid a separate read query.
+    // The meeting.delete will throw an error if the record is not found (due to ID or access check),
+    // which aborts the transaction and rolls back the issue deletions.
     await prisma.$transaction([
       prisma.issue.deleteMany({
         where: {
@@ -483,6 +495,13 @@ export async function deleteMeeting(meetingId: string) {
       prisma.meeting.delete({
         where: {
           id: meetingId,
+          project: {
+            userToProject: {
+              some: {
+                userId: userId,
+              },
+            },
+          },
         },
       }),
     ]);
@@ -490,6 +509,7 @@ export async function deleteMeeting(meetingId: string) {
     return { success: true };
   } catch (error: any) {
     console.error("Error deleting meeting:", error);
-    return { success: false, error: error.message || "Failed to delete meeting." };
+    // The error from Prisma for a failed delete is generic, so we provide a clearer message.
+    return { success: false, error: "Meeting not found or access denied." };
   }
 }

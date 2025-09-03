@@ -6,6 +6,8 @@ import Link from "next/link";
 import CommitLogs from "./commit-logs";
 import AskQuestionsCard from "./ask-questions-card";
 import MeetingCard from "../meetings/meeting-card";
+import ArchiveProjectButton from "./ArchiveProjectButton";
+import InviteButton from "./InviteButton";
 
 const DashBoard = () => {
   const { project } = useProject();
@@ -34,8 +36,8 @@ const DashBoard = () => {
 
         <div className="flex items-center gap-4">
           <div className="text-sm">TeamsMembers</div>
-          <div className="text-sm">Addmembers</div>
-          <div className="text-sm">ArchiveButton</div>
+          <InviteButton />
+          <ArchiveProjectButton />
         </div>
       </div>
 
