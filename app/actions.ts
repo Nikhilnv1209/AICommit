@@ -513,3 +513,24 @@ export async function deleteMeeting(meetingId: string) {
     return { success: false, error: "Meeting not found or access denied." };
   }
 }
+
+export async function getProjectTeam(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const team = await prisma.userToProject.findMany({
+      where: {
+        projectId: projectId,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    return { success: true, team };
+  } catch (error: any) {
+    console.error("Error fetching project team:", error);
+    return { success: false, error: error.message || "Failed to fetch project team." };
+  }
+}
