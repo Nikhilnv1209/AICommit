@@ -545,3 +545,26 @@ export async function getProjectTeam(projectId: string) {
     return { success: false, error: error.message || "Failed to fetch project team." };
   }
 }
+
+export async function getUserCredits() {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        credits: true,
+      },
+    });
+
+    if (!user) throw new Error("User not found in database.");
+
+    return { success: true, credits: user.credits };
+  } catch (error: any) {
+    console.error("Error fetching user credits:", error);
+    return { success: false, error: error.message || "Failed to fetch credits." };
+  }
+}
