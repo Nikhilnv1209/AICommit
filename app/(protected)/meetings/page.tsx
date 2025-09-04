@@ -56,7 +56,7 @@ const MeetingPage = () => {
   });
 
   const { mutate: deleteMutation, isPending: isDeleting } = useMutation({
-    mutationFn: deleteMeeting,
+    mutationFn: ({ meetingId, meetingUrl }: { meetingId: string, meetingUrl: string }) => deleteMeeting(meetingId, meetingUrl),
     onSuccess: () => {
       toast.success("Meeting deleted successfully");
       refetch();
@@ -66,8 +66,8 @@ const MeetingPage = () => {
     },
   });
 
-  const handleDelete = (meetingId: string) => {
-    deleteMutation(meetingId);
+  const handleDelete = (meetingId: string, meetingUrl: string) => {
+    deleteMutation({ meetingId, meetingUrl });
   };
 
   // Handle upload completion
@@ -138,7 +138,7 @@ const MeetingPage = () => {
               <div className="flex-shrink-0">
                 <Dialog>
                   <DialogTrigger asChild>
-                    <Button variant="destructive" size="icon" disabled={isDeleting}>
+                    <Button variant="destructive" size="icon" disabled={isDeleting || meeting.status === "PROCESSING"}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </DialogTrigger>
@@ -151,7 +151,7 @@ const MeetingPage = () => {
                     </DialogHeader>
                     <DialogFooter>
                       <Button variant="outline">Cancel</Button>
-                      <Button variant="destructive" onClick={() => handleDelete(meeting.id)} disabled={isDeleting}>
+                      <Button variant="destructive" onClick={() => handleDelete(meeting.id, meeting.meetingUrl)} disabled={isDeleting || meeting.status === "PROCESSING"}>
                         Delete
                       </Button>
                     </DialogFooter>

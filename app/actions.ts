@@ -477,15 +477,13 @@ export async function getMeetingById(meetingId: string) {
   }
 }
 
-export async function deleteMeeting(meetingId: string) {
+export async function deleteMeeting(meetingId: string, meetingUrl: string) {
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
-    // By performing deletes within a transaction with access control checks in the 'where' clause,
-    // we make the operation atomic and avoid a separate read query.
-    // The meeting.delete will throw an error if the record is not found (due to ID or access check),
-    // which aborts the transaction and rolls back the issue deletions.
+    // By performing deletes within a transaction, we make the operation atomic.
+    // If any part fails, the entire transaction is rolled back.
     await prisma.$transaction([
       prisma.issue.deleteMany({
         where: {
@@ -506,11 +504,24 @@ export async function deleteMeeting(meetingId: string) {
       }),
     ]);
 
+    // After the transaction is successful, delete the file from Cloudinary
+    if (meetingUrl) {
+      try {
+        const publicId = meetingUrl.split("/").pop()?.split(".")[0];
+        if (publicId) {
+          await cloudinary.uploader.destroy(publicId, { resource_type: 'video' });
+        }
+      } catch (cloudinaryError) {
+        console.error("Cloudinary deletion failed:", cloudinaryError);
+        // Decide if you want to return an error to the user.
+        // For now, we'll just log it and still return success for the DB deletion.
+      }
+    }
+
     return { success: true };
   } catch (error: any) {
     console.error("Error deleting meeting:", error);
-    // The error from Prisma for a failed delete is generic, so we provide a clearer message.
-    return { success: false, error: "Meeting not found or access denied." };
+    return { success: false, error: "Failed to delete meeting." };
   }
 }
 
