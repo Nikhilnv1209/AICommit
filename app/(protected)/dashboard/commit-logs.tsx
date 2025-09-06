@@ -74,18 +74,22 @@ const CommitLogs = () => {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // Brief loading toasts for feedback on small screens too
+  // Persistent loading toasts while fetching
   useEffect(() => {
     if (!mounted) return;
     if (isLoading) {
-      toast.message("Loading commits...", { description: "Fetching latest commits", duration: 1200 });
+      toast.loading("Loading commits...", { id: "loading-commits-initial" });
+    } else {
+      toast.dismiss("loading-commits-initial");
     }
   }, [mounted, isLoading]);
 
   useEffect(() => {
     if (!mounted) return;
     if (isFetchingNextPage) {
-      toast.message("Loading more commits...", { duration: 1000 });
+      toast.loading("Loading more commits...", { id: "loading-commits-more" });
+    } else {
+      toast.dismiss("loading-commits-more");
     }
   }, [mounted, isFetchingNextPage]);
 

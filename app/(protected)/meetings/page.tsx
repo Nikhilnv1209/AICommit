@@ -46,7 +46,7 @@ const MeetingPage = () => {
   const { projectId } = useProject();
   const [uploadComplete, setUploadComplete] = useState(false);
 
-  const { data: meetingsResponse, status, refetch } = useQuery({
+  const { data: meetingsResponse, status, refetch, isFetching } = useQuery({
     queryKey: ["meetings", projectId],
     queryFn: async () => {
       if (!projectId) return null;
@@ -55,17 +55,15 @@ const MeetingPage = () => {
     enabled: !!projectId,
   });
 
-  // Quick feedback while meetings load (guard duplicates in Strict Mode)
-  const meetingsToastShownRef = useRef(false);
+  // Persistent loading toast while meetings query is fetching
   useEffect(() => {
-    const isPending = status === "pending";
-    if (isPending && !meetingsToastShownRef.current) {
-      toast.message("Loading meetings...", { id: "loading-meetings", duration: 1200 });
-      meetingsToastShownRef.current = true;
-    } else if (!isPending) {
-      meetingsToastShownRef.current = false;
+    const loading = status === "pending" || isFetching;
+    if (loading) {
+      toast.loading("Loading meetings...", { id: "loading-meetings" });
+    } else {
+      toast.dismiss("loading-meetings");
     }
-  }, [status]);
+  }, [status, isFetching]);
 
   const { mutate: deleteMutation, isPending: isDeleting } = useMutation({
     mutationFn: ({ meetingId, meetingUrl }: { meetingId: string, meetingUrl: string }) => deleteMeeting(meetingId, meetingUrl),

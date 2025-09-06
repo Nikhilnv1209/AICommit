@@ -15,7 +15,7 @@ const QAPage = () => {
   const { resolvedTheme } = useTheme();
   const [questionIndex, setquestionIndex] = useState<number>(0)
   
-  const { data: questions, status } = useQuery({
+  const { data: questions, status, isFetching } = useQuery({
     queryKey: ["questions", projectId],
     queryFn: async () => {
       if (!projectId) return null;
@@ -24,16 +24,15 @@ const QAPage = () => {
     enabled: !!projectId,
   });
 
-  const questionsToastShownRef = useRef(false);
+  // Persistent loading toast while questions query is fetching
   useEffect(() => {
-    const isPending = status === "pending";
-    if (isPending && !questionsToastShownRef.current) {
-      toast.message("Loading questions...", { id: "loading-questions", duration: 1200 });
-      questionsToastShownRef.current = true;
-    } else if (!isPending) {
-      questionsToastShownRef.current = false;
+    const loading = status === "pending" || isFetching;
+    if (loading) {
+      toast.loading("Loading questions...", { id: "loading-questions" });
+    } else {
+      toast.dismiss("loading-questions");
     }
-  }, [status]);
+  }, [status, isFetching]);
 
   const question = questions?.[questionIndex]
 
