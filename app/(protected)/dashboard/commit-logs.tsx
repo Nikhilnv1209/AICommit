@@ -8,6 +8,7 @@ import { ExternalLink, Calendar, GitCommit } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import React, { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type CommitsPage = { items: any[]; nextCursor: string | null };
@@ -72,6 +73,21 @@ const CommitLogs = () => {
   // Ensure server and client render the same initial markup to avoid hydration mismatches
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // Brief loading toasts for feedback on small screens too
+  useEffect(() => {
+    if (!mounted) return;
+    if (isLoading) {
+      toast.message("Loading commits...", { description: "Fetching latest commits", duration: 1200 });
+    }
+  }, [mounted, isLoading]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (isFetchingNextPage) {
+      toast.message("Loading more commits...", { duration: 1000 });
+    }
+  }, [mounted, isFetchingNextPage]);
 
   const commits: any[] = ((data as any)?.pages as CommitsPage[] | undefined)?.flatMap((p) => p.items) ?? [];
 

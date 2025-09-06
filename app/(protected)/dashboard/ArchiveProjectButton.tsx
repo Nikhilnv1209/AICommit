@@ -37,9 +37,10 @@ const ArchiveProjectButton = () => {
       variant="destructive"
       onClick={handleArchive}
       disabled={isPending || !project}
+      className="px-2 sm:px-4"
     >
-      <Archive className="mr-2 h-4 w-4" />
-      <span>{isPending ? "Archiving..." : "Archive Project"}</span>
+      <Archive className="h-4 w-4" />
+      <span className="ml-2 hidden sm:inline">{isPending ? "Archiving..." : "Archive Project"}</span>
     </Button>
   );
 };

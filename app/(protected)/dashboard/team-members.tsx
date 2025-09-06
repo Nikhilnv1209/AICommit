@@ -28,7 +28,16 @@ const TeamMembers = () => {
   });
 
   if (isLoading) {
-    return <div className="h-10 w-24 animate-pulse rounded-md bg-gray-200" />;
+    return (
+      <div className="flex -space-x-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-8 w-8 rounded-full ring-2 ring-white bg-muted animate-pulse"
+          />
+        ))}
+      </div>
+    );
   }
 
   const members = data ?? [];

@@ -32,9 +32,9 @@ const InviteButton = () => {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button>
-          <UserPlus className="mr-2 h-4 w-4" />
-          Invite Members
+        <Button className="px-2 sm:px-4">
+          <UserPlus className="h-4 w-4" />
+          <span className="ml-2 hidden sm:inline">Invite Members</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="p-10">

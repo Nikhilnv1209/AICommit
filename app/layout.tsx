@@ -38,7 +38,7 @@ export default function RootLayout({
             enableSystem
             storageKey="ai-commit-theme"
           >
-            <Toaster position="bottom-right" expand theme="system" />
+            <Toaster position="top-right" expand theme="system" />
             <QueryProvider>
               {children}
             </QueryProvider>

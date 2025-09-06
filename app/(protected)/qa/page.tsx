@@ -4,17 +4,18 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import useProject from "@/hooks/use-project"
 import { useQuery } from "@tanstack/react-query";
 import AskQuestionsCard from "../dashboard/ask-questions-card";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import MDEditor from "@uiw/react-md-editor";
 import CodeReferences from "../dashboard/code-references";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 
 const QAPage = () => {
   const { projectId } = useProject();
   const { resolvedTheme } = useTheme();
   const [questionIndex, setquestionIndex] = useState<number>(0)
   
-  const { data: questions } = useQuery({
+  const { data: questions, status } = useQuery({
     queryKey: ["questions", projectId],
     queryFn: async () => {
       if (!projectId) return null;
@@ -22,6 +23,17 @@ const QAPage = () => {
     },
     enabled: !!projectId,
   });
+
+  const questionsToastShownRef = useRef(false);
+  useEffect(() => {
+    const isPending = status === "pending";
+    if (isPending && !questionsToastShownRef.current) {
+      toast.message("Loading questions...", { id: "loading-questions", duration: 1200 });
+      questionsToastShownRef.current = true;
+    } else if (!isPending) {
+      questionsToastShownRef.current = false;
+    }
+  }, [status]);
 
   const question = questions?.[questionIndex]
 

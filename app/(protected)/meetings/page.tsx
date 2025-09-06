@@ -6,7 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import MeetingCard from "./meeting-card";
 import { FileAudio, Loader2, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -54,6 +54,18 @@ const MeetingPage = () => {
     },
     enabled: !!projectId,
   });
+
+  // Quick feedback while meetings load (guard duplicates in Strict Mode)
+  const meetingsToastShownRef = useRef(false);
+  useEffect(() => {
+    const isPending = status === "pending";
+    if (isPending && !meetingsToastShownRef.current) {
+      toast.message("Loading meetings...", { id: "loading-meetings", duration: 1200 });
+      meetingsToastShownRef.current = true;
+    } else if (!isPending) {
+      meetingsToastShownRef.current = false;
+    }
+  }, [status]);
 
   const { mutate: deleteMutation, isPending: isDeleting } = useMutation({
     mutationFn: ({ meetingId, meetingUrl }: { meetingId: string, meetingUrl: string }) => deleteMeeting(meetingId, meetingUrl),
