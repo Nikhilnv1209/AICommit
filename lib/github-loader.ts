@@ -1,6 +1,7 @@
 import { Document } from 'langchain/document';
 import { batchProcessDocuments } from './gemini';
 import { prisma } from '@/prisma/client';
+import { startIndexing, setTotal as setIndexTotal, setProcessed as setIndexProcessed, completeIndexing, errorIndexing } from '@/lib/indexing-progress';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 
 // Shared ignore list for non-source/binary files
@@ -196,10 +197,12 @@ class GithubRateLimiter {
 async function processEmbeddingsInBatches(
   embeddings: Array<{ sourceCode: string; fileName: string; summary: string; embedding: any }>,
   projectId: string,
-  concurrency: number
+  concurrency: number,
+  onProgress?: (processed: number) => void
 ): Promise<{ success: number; failed: number }> {
   const results: Array<{ success: boolean; id?: string; fileName: string; error?: any }> = [];
   let activePromises: Promise<any>[] = [];
+  let processedCount = 0;
 
   for (let i = 0; i < embeddings.length; i++) {
     const embedding = embeddings[i];
@@ -222,13 +225,17 @@ async function processEmbeddingsInBatches(
           WHERE "id" = ${sourceCodeEmbedding.id}
         `;
 
+        processedCount += 1;
         console.log(`Created embedding ${i + 1} of ${embeddings.length} for file ${embedding.fileName}`);
+        if (onProgress) onProgress(processedCount);
         return { success: true, id: sourceCodeEmbedding.id, fileName: embedding.fileName };
       } catch (err: any) {
         console.error(`Error saving embedding ${i + 1} of ${embeddings.length} for ${embedding.fileName}:`, {
           message: err.message,
           stack: err.stack,
         });
+        processedCount += 1; // count failed as processed for progress visibility
+        if (onProgress) onProgress(processedCount);
         return { success: false, error: err, fileName: embedding.fileName };
       }
     })();
@@ -251,13 +258,18 @@ async function processEmbeddingsInBatches(
 export const indexGithubRepo = async (projectId: string, githubUrl: string, githubToken?: string) => {
   const rateLimiter = GithubRateLimiter.getInstance();
   try {
+    startIndexing(projectId);
     const docs = await rateLimiter.loadGithubRepo(githubUrl, githubToken);
     const batchSize = 10;
     const allEmbeddings = await batchProcessDocuments(docs, batchSize);
+    setIndexTotal(projectId, allEmbeddings.length);
 
-    const { success, failed } = await processEmbeddingsInBatches(allEmbeddings, projectId, MAX_DB_CONCURRENCY);
+    const { success, failed } = await processEmbeddingsInBatches(allEmbeddings, projectId, MAX_DB_CONCURRENCY, (processed) => {
+      setIndexProcessed(projectId, processed);
+    });
 
     console.log(`GitHub repo indexing completed. Success: ${success}, Failed: ${failed}`);
+    completeIndexing(projectId);
     return { success, failed };
   } catch (error: any) {
     console.error('Error indexing GitHub repository:', {
@@ -266,6 +278,7 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
       message: error.message,
       stack: error.stack,
     });
+    errorIndexing(projectId, error?.message);
     throw error;
   }
 };

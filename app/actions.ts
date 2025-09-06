@@ -11,6 +11,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import cloudinary from "@/lib/cloudinary";
 import { Readable, Transform } from "node:stream";
 import type { UploadApiResponse } from "cloudinary";
+import { getIndexingProgress as getProgress } from "@/lib/indexing-progress";
 
 const pollingProjects = new Set<string>();
 
@@ -102,6 +103,28 @@ export async function checkRepoCredits(repoUrl: string, githubToken?: string) {
   }
 }
 
+export async function getIndexingProgress(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+    if (!projectId) throw new Error("Project id required");
+
+    // Optionally verify user has access to the project
+    const hasAccess = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        userToProject: { some: { userId } },
+      },
+      select: { id: true },
+    });
+    if (!hasAccess) throw new Error("Project not found or access denied");
+
+    return getProgress(projectId);
+  } catch (error: any) {
+    return { status: 'IDLE', processed: 0, total: 0, error: error?.message || 'Failed to get progress' } as any;
+  }
+}
+
 export async function submitCreateForm(formdata: TFormData) {
   try {
     const result = createFormSchema.safeParse(formdata); // Server-side validation
@@ -113,22 +136,29 @@ export async function submitCreateForm(formdata: TFormData) {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
-    // Check credits before creating the project
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { credits: true } });
-    if (!user) throw new Error("User not found.");
-
+    // Determine required credits (1 per file), then atomically deduct and create project
     const fileCount = await countGithubRepoFiles(result.data.repoUrl, result.data.githubToken || undefined);
-    if (user.credits < fileCount) {
-      return { error: `Insufficient credits. Required: ${fileCount}, Available: ${user.credits}` };
-    }
 
-    const project = await prisma.project.create({
-      data: {
-        name: result.data.projectName,
-        githubUrl: result.data.repoUrl,
-        githubToken: result.data.githubToken || null,
-        userToProject: { create: { userId: userId! } },
-      },
+    const { project, remainingCredits } = await prisma.$transaction(async (tx) => {
+      const dec = await tx.user.updateMany({
+        where: { id: userId, credits: { gte: fileCount } },
+        data: { credits: { decrement: fileCount } },
+      });
+      if (dec.count === 0) {
+        throw new Error(`Insufficient credits. Required: ${fileCount}.`);
+      }
+
+      const created = await tx.project.create({
+        data: {
+          name: result.data.projectName,
+          githubUrl: result.data.repoUrl,
+          githubToken: result.data.githubToken || null,
+          userToProject: { create: { userId: userId! } },
+        },
+      });
+
+      const userAfter = await tx.user.findUnique({ where: { id: userId }, select: { credits: true } });
+      return { project: created, remainingCredits: userAfter?.credits ?? null };
     });
 
     if (!project) throw new Error("Failed to create the project.");
@@ -158,10 +188,12 @@ export async function submitCreateForm(formdata: TFormData) {
       });
     }
 
-    return { success: `Project "${project.name}" created successfully! Indexing has started in the background.` };
-  } catch (error) {
+    const suffix = typeof remainingCredits === 'number' ? ` Remaining credits: ${remainingCredits}.` : '';
+    return { success: `Project "${project.name}" created successfully! Indexing has started in the background.${suffix}` };
+  } catch (error: any) {
     console.log("Error:", error);
-    return { error: "Failed to create the project. Please try again." };
+    const message = error?.message || "Failed to create the project. Please try again.";
+    return { error: message };
   }
 }
 
