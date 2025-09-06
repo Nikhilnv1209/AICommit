@@ -3,6 +3,29 @@ import { batchProcessDocuments } from './gemini';
 import { prisma } from '@/prisma/client';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 
+// Shared ignore list for non-source/binary files
+const IGNORE_FILES: string[] = [
+  '.gitignore',
+  'yarn.lock',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  '.DS_Store',
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.tiff', '.webp', '.ico',
+  '.ttf', '.otf', '.woff', '.woff2', '.eot',
+  '.bin', '.exe', '.dll', '.so', '.dylib',
+  '.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.mid', '.midi',
+  '.mp4', '.avi', '.mov', '.wmv', '.mkv',
+  '.zip', '.rar', '.tar', '.gz', '.7z', '.xz', '.iso',
+  '.pdf',
+  '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx',
+  '.db', '.sqlite', '.mdb',
+  '.obj', '.fbx', '.stl', '.dae', '.dwg', '.dxf',
+  '.h5', '.ckpt', '.pth', '.pb',
+  '.apk', '.ipa',
+  '.jar', '.war',
+  '.pak',
+];
+
 // GitHub API rate limits for unauthenticated users
 const GITHUB_API_RATE_LIMIT = {
   maxRequestsPerHour: 60,
@@ -66,6 +89,15 @@ class GithubRateLimiter {
     });
   }
 
+  // Public wrappers to reuse internals safely
+  public async apiGet(url: string, options: AxiosRequestConfig = {}) {
+    return this.githubApiFetch(url, options);
+  }
+
+  public async getDefaultBranchPublic(githubUrl: string, githubToken?: string) {
+    return this.getDefaultBranch(githubUrl, githubToken);
+  }
+
   private async enforceRateLimit(): Promise<void> {
     const now = Date.now();
     if (now - this.lastResetTime >= GITHUB_API_RATE_LIMIT.cooldownMs) {
@@ -126,105 +158,6 @@ class GithubRateLimiter {
     const headers = githubToken ? { Authorization: `token ${githubToken}` } : {};
 
     const docs: Document[] = [];
-    const ignoreFiles = [
-      // Lock files and OS-specific metadata
-      'package-lock.json',
-      'yarn.lock',
-      'pnpm-lock.yaml',
-      '.DS_Store',
-    
-      // Image files
-      '.png',
-      '.jpg',
-      '.jpeg',
-      '.gif',
-      '.bmp',
-      '.svg',
-      '.tiff',
-      '.webp',
-      '.ico',  // Icon files
-    
-      // Font files
-      '.ttf',
-      '.otf',
-      '.woff',
-      '.woff2',
-      '.eot',
-    
-      // Binary executables and libraries
-      '.bin',
-      '.exe',
-      '.dll',
-      '.so',      // Linux shared objects
-      '.dylib',   // macOS dynamic libraries
-    
-      // Audio files
-      '.mp3',
-      '.wav',
-      '.ogg',
-      '.flac',
-      '.aac',
-      '.m4a',
-      '.mid',
-      '.midi',
-    
-      // Video files
-      '.mp4',
-      '.avi',
-      '.mov',
-      '.wmv',
-      '.mkv',
-    
-      // Archive and compressed files
-      '.zip',
-      '.rar',
-      '.tar',
-      '.gz',
-      '.7z',
-      '.xz',
-      '.iso',
-    
-      // Document files that are generally binary (skip PDFs if you don’t want text extraction)
-      '.pdf',
-    
-      // Office and presentation files (often binary, though sometimes contain text)
-      '.doc',
-      '.docx',
-      '.ppt',
-      '.pptx',
-      '.xls',
-      '.xlsx',
-    
-      // Database files
-      '.db',
-      '.sqlite',
-      '.mdb',
-    
-      // 3D models and CAD files
-      '.obj',
-      '.fbx',
-      '.stl',
-      '.dae',
-      '.dwg',
-      '.dxf',
-    
-      // Machine learning and data model files
-      '.h5',
-      '.ckpt',
-      '.pth',
-      '.pb',
-    
-      // Application packages
-      '.apk',
-      '.ipa',
-    
-      // Java archives and similar container files
-      '.jar',
-      '.war',
-    
-      // Miscellaneous binary asset containers
-      '.pak'
-    ];
     
 
     const fetchContents = async (path: string): Promise<any[]> => {
@@ -236,7 +169,7 @@ class GithubRateLimiter {
     const processDirectory = async (path: string = ''): Promise<void> => {
       const items = await this.enqueue(() => fetchContents(path));
       for (const item of items) {
-        if (item.type === 'file' && !ignoreFiles.some((f: string) => item.name.toLowerCase().endsWith(f))) {
+        if (item.type === 'file' && !IGNORE_FILES.some((f: string) => item.name.toLowerCase().endsWith(f))) {
           const rawUrl = `${baseRawUrl}/${item.path}`;
           try {
             const content = await this.fetchRawContent(rawUrl);
@@ -336,3 +269,34 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
     throw error;
   }
 };
+
+/** Count eligible files in a GitHub repo (used for credit checks) */
+export const countGithubRepoFiles = async (githubUrl: string, githubToken?: string): Promise<number> => {
+  const rateLimiter = GithubRateLimiter.getInstance();
+  const defaultBranch = await rateLimiter.enqueue(() => rateLimiter.getDefaultBranchPublic(githubUrl, githubToken));
+  const [_, __, ___, owner, repo] = githubUrl.split('/');
+  const baseApiUrl = `https://api.github.com/repos/${owner}/${repo}/contents`;
+  const headers = githubToken ? { Authorization: `token ${githubToken}` } : {};
+
+  let count = 0;
+
+  const fetchContents = async (path: string): Promise<any[]> => {
+    const url = `${baseApiUrl}/${path}?ref=${defaultBranch}`;
+    const response = await rateLimiter.apiGet(url, { headers });
+    return response.data;
+  };
+
+  const processDirectory = async (path: string = ''): Promise<void> => {
+    const items = await rateLimiter.enqueue(() => fetchContents(path));
+    for (const item of items) {
+      if (item.type === 'file' && !IGNORE_FILES.some((f: string) => item.name.toLowerCase().endsWith(f))) {
+        count += 1;
+      } else if (item.type === 'dir') {
+        await processDirectory(item.path);
+      }
+    }
+  };
+
+  await processDirectory();
+  return count;
+}

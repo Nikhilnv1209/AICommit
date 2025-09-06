@@ -4,17 +4,36 @@ import { Input } from "@/components/ui/input";
 import { useForm } from "react-hook-form";
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createFormSchema, TFormData } from "@/utils/schema";
-import { submitCreateForm } from "@/app/actions";
+import { submitCreateForm, checkRepoCredits } from "@/app/actions";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import useProject from "@/hooks/use-project";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 
 const CreatePage = () => {
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<TFormData>({ resolver: zodResolver(createFormSchema) })
+  const { register, handleSubmit, reset, watch, formState: { errors, isSubmitting } } = useForm<TFormData>({ resolver: zodResolver(createFormSchema) })
   const { refreshProjects } = useProject();
 
+  const repoUrl = watch("repoUrl");
+  const githubToken = watch("githubToken");
+
+  const [checkingCredits, setCheckingCredits] = useState(false);
+  const [fileCount, setFileCount] = useState<number | null>(null);
+  const [userCredits, setUserCredits] = useState<number | null>(null);
+  const [sufficient, setSufficient] = useState<boolean | null>(null);
+  const [creditError, setCreditError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const onSubmit = async (data: TFormData) => {
+      if (checkingCredits) {
+        toast.message("Please wait, checking credits...");
+        return;
+      }
+      if (sufficient === false) {
+        toast.error("Insufficient credits for this repository");
+        return;
+      }
       const response = await submitCreateForm(data);
 
       if (response?.error) {
@@ -25,6 +44,42 @@ const CreatePage = () => {
         refreshProjects(); // Refresh projects list
       }
   } 
+
+  // Debounced credit check when repoUrl looks valid
+  useEffect(() => {
+    const validGithub = repoUrl && repoUrl.startsWith("https://github.com/");
+    if (!validGithub) {
+      setFileCount(null);
+      setUserCredits(null);
+      setSufficient(null);
+      setCreditError(null);
+      return;
+    }
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        setCheckingCredits(true);
+        setCreditError(null);
+        const data = await checkRepoCredits(repoUrl!, githubToken || undefined);
+        if ((data as any)?.error) throw new Error((data as any).error);
+        setFileCount((data as any).fileCount ?? null);
+        setUserCredits((data as any).userCredits ?? null);
+        setSufficient(Boolean((data as any).sufficient));
+      } catch (e: any) {
+        setCreditError(e?.message || "Failed to check credits");
+        setFileCount(null);
+        setUserCredits(null);
+        setSufficient(null);
+      } finally {
+        setCheckingCredits(false);
+      }
+    }, 600);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [repoUrl, githubToken]);
 
   return (
     <div className="flex flex-col md:flex-row items-center justify-center gap-8 md:gap-12 h-full p-4">
@@ -63,8 +118,28 @@ const CreatePage = () => {
             />
             {errors.githubToken && <p className="text-red-400 text-xs my-1 ml-1">{errors.githubToken.message}</p>}
             </div>
-            <Button disabled={isSubmitting} className="w-full">
-              {isSubmitting && <Loader2 className="animate-spin mr-2"/>}Create Project
+            {(!checkingCredits && (creditError || fileCount !== null)) && (
+              <div className="text-sm p-3 rounded-md border mb-2 flex flex-col gap-1">
+                {creditError && (
+                  <div className="text-red-500">{creditError}</div>
+                )}
+                {!creditError && fileCount != null && userCredits != null && (
+                  <div className="flex flex-col gap-0.5">
+                    <span>Files to index: <span className="font-medium">{fileCount}</span> (credits required)</span>
+                    <span>Your credits: <span className="font-medium">{userCredits}</span></span>
+                    {sufficient === false && (
+                      <span className="text-red-500">Not enough credits to create this project.</span>
+                    )}
+                    {sufficient === true && (
+                      <span className="text-green-600">You have sufficient credits.</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <Button disabled={isSubmitting || checkingCredits || sufficient === false} className="w-full">
+              {(isSubmitting || checkingCredits) && <Loader2 className="animate-spin mr-2"/>}
+              {checkingCredits ? "Checking credits..." : "Create Project"}
             </Button>
           </form>
         </div>

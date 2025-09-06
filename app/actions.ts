@@ -3,7 +3,7 @@ import { createFormSchema, TFormData } from "@/utils/schema";
 import { prisma } from "@/prisma/client";
 import { auth } from "@clerk/nextjs/server";
 import { pollCommits } from "@/lib/github";
-import { indexGithubRepo } from "@/lib/github-loader";
+import { indexGithubRepo, countGithubRepoFiles } from "@/lib/github-loader";
 import { aiGenerateEmbeddings } from './../lib/gemini';
 import { streamText } from "ai";
 import { createStreamableValue } from "ai/rsc";
@@ -80,6 +80,28 @@ export async function askQuestion(question: string, projectId: string) {
   };
 }
 
+export async function checkRepoCredits(repoUrl: string, githubToken?: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    if (!repoUrl || !repoUrl.startsWith("https://github.com/")) {
+      throw new Error("Invalid GitHub URL");
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { credits: true } });
+    if (!user) throw new Error("User not found.");
+
+    const fileCount = await countGithubRepoFiles(repoUrl, githubToken);
+    const sufficient = user.credits >= fileCount;
+
+    return { fileCount, userCredits: user.credits, sufficient };
+  } catch (error: any) {
+    const message = error?.message || "Failed to check credits";
+    return { error: message };
+  }
+}
+
 export async function submitCreateForm(formdata: TFormData) {
   try {
     const result = createFormSchema.safeParse(formdata); // Server-side validation
@@ -90,6 +112,15 @@ export async function submitCreateForm(formdata: TFormData) {
 
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+
+    // Check credits before creating the project
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { credits: true } });
+    if (!user) throw new Error("User not found.");
+
+    const fileCount = await countGithubRepoFiles(result.data.repoUrl, result.data.githubToken || undefined);
+    if (user.credits < fileCount) {
+      return { error: `Insufficient credits. Required: ${fileCount}, Available: ${user.credits}` };
+    }
 
     const project = await prisma.project.create({
       data: {
