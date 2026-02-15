@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^1.1.25",
-    "@clerk/nextjs": "^6.9.9",
+    "@clerk/nextjs": "^5.7.5",
     "@google/generative-ai": "^0.21.0",
     "@hookform/resolvers": "^4.0.0",
     "@langchain/community": "^0.3.32",
@@ -33,7 +33,6 @@
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.7.0",
     "clsx": "^2.1.1",
-    "ignore": "^7.0.3",
     "lucide-react": "^0.471.2",
     "next": "15.1.11",
     "next-themes": "^0.4.6",

@@ -8,6 +8,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import useProject from "@/hooks/use-project";
 import { readStreamableValue } from "ai/rsc";
+
+// Development-only logging for frontend
+const devConsole = {
+  log: (...args: any[]) => process.env.NODE_ENV === 'development' && console.log(...args),
+  error: (...args: any[]) => process.env.NODE_ENV === 'development' && console.error(...args),
+  warn: (...args: any[]) => process.env.NODE_ENV === 'development' && console.warn(...args),
+};
 import Image from "next/image";
 import { FormEvent, KeyboardEvent, useState } from "react";
 import "@/app/markdown-container.css";
@@ -98,7 +105,7 @@ const AskQuestionsCard = () => {
         loading: "Saving...",
         success: () => "Saved successfully!",
         error: (err) => {
-          console.error(err);
+          devConsole.error(err);
           return "Something went wrong.";
         },
       }

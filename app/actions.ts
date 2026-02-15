@@ -8,6 +8,7 @@ import { aiGenerateEmbeddings } from './../lib/gemini';
 import { streamText } from "ai";
 import { createStreamableValue } from "ai/rsc";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { logError, logInfo } from '@/lib/logger';
 import cloudinary from "@/lib/cloudinary";
 import { Readable, Transform } from "node:stream";
 import type { UploadApiResponse } from "cloudinary";
@@ -181,7 +182,7 @@ export async function submitCreateForm(formdata: TFormData) {
           await pollCommits(project.id, project.githubUrl!);
 
         } catch (error) {
-          console.error("Background indexing error:", error);
+          logError('BackgroundIndexing', 'Background indexing error:', error);
         } finally {
           pollingProjects.delete(project.id); // Remove from polling set
         }
@@ -191,7 +192,7 @@ export async function submitCreateForm(formdata: TFormData) {
     const suffix = typeof remainingCredits === 'number' ? ` Remaining credits: ${remainingCredits}.` : '';
     return { success: `Project "${project.name}" created successfully! Indexing has started in the background.${suffix}` };
   } catch (error: any) {
-    console.log("Error:", error);
+    logError('ProjectCreation', 'Error creating project:', error);
     const message = error?.message || "Failed to create the project. Please try again.";
     return { error: message };
   }
@@ -218,7 +219,7 @@ export async function getProjects() {
 
     return projects;
   } catch (error: any) {
-    console.log("Error: from getProjects", error.message as string);
+    logError('GetProjects', 'Error fetching projects:', error.message);
     return [];
   }
 }
@@ -237,7 +238,7 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
         } catch (e) {
           // Improved error handling
           const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
-          console.error("Error polling commits in background:", errorDetails);
+          logError('PollCommits', 'Error polling commits in background:', errorDetails);
         } finally {
           pollingProjects.delete(projectId); // Remove from polling set
         }
@@ -255,7 +256,7 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
 
     return commits;
   } catch (error) {
-    console.log("Error:", error);
+    logError('Actions', 'Error occurred:', error);
     return [];
   }
 }
@@ -280,7 +281,7 @@ export async function getProjectCommitsPage(
           await pollCommits(projectId, opts.githubUrl!);
         } catch (e) {
           const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
-          console.error("Error polling commits in background:", errorDetails);
+          logError('PollCommits', 'Error polling commits in background:', errorDetails);
         } finally {
           pollingProjects.delete(projectId);
         }
@@ -306,7 +307,7 @@ export async function getProjectCommitsPage(
 
     return { items, nextCursor };
   } catch (error) {
-    console.log("Error:", error);
+    logError('Actions', 'Error occurred:', error);
     return { items: [], nextCursor: null };
   }
 }
@@ -336,7 +337,7 @@ export async function archiveProject(projectId: string) {
   } catch (error: any) {
     // Prisma throws an error if the record to update is not found.
     // We can treat that as a "not found or access denied" case.
-    console.error("Error archiving project:", error);
+    logError('ArchiveProject', 'Error archiving project:', error);
     return { success: false, error: "Project not found or access denied." };
   }
 }
@@ -359,7 +360,7 @@ export async function saveQuestion(projectId: string, question: string, answer:s
 
     return savedQuestion;
   } catch (error) {
-    console.log("Error:", error);
+    logError('Actions', 'Error occurred:', error);
     return null;
   }
 }
@@ -380,7 +381,7 @@ export async function getQuestions(projectId: string) {
 
     return questions;
   } catch (error) {
-    console.log("Error:", error);
+    logError('Actions', 'Error occurred:', error);
     return null;
   }
 }
@@ -472,7 +473,7 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
 
     return { success: true, meeting };
   } catch (error: any) {
-    console.error("Error creating meeting:", error);
+    logError('CreateMeeting', 'Error creating meeting:', error);
     return { success: false, error: error.message || "Failed to create meeting." };
   }
 }
@@ -504,7 +505,7 @@ export async function getMeetings(projectId: string) {
 
     return { success: true, meetings };
   } catch (error: any) {
-    console.error("Error fetching meetings:", error);
+    logError('GetMeetings', 'Error fetching meetings:', error);
     return { success: false, error: error.message || "Failed to fetch meetings." };
   }
 }
@@ -535,7 +536,7 @@ export async function getMeetingById(meetingId: string) {
 
     return { success: true, meeting };
   } catch (error: any) {
-    console.error("Error fetching meeting:", error);
+    logError('GetMeeting', 'Error fetching meeting:', error);
     return { success: false, error: error.message || "Failed to fetch meeting." };
   }
 }
@@ -575,7 +576,7 @@ export async function deleteMeeting(meetingId: string, meetingUrl: string) {
           await cloudinary.uploader.destroy(publicId, { resource_type: 'video' });
         }
       } catch (cloudinaryError) {
-        console.error("Cloudinary deletion failed:", cloudinaryError);
+        logError('Cloudinary', 'Cloudinary deletion failed:', cloudinaryError, true); // Log in production since this is billing-related
         // Decide if you want to return an error to the user.
         // For now, we'll just log it and still return success for the DB deletion.
       }
@@ -583,7 +584,7 @@ export async function deleteMeeting(meetingId: string, meetingUrl: string) {
 
     return { success: true };
   } catch (error: any) {
-    console.error("Error deleting meeting:", error);
+    logError('DeleteMeeting', 'Error deleting meeting:', error);
     return { success: false, error: "Failed to delete meeting." };
   }
 }
@@ -604,7 +605,7 @@ export async function getProjectTeam(projectId: string) {
 
     return { success: true, team };
   } catch (error: any) {
-    console.error("Error fetching project team:", error);
+    logError('GetProjectTeam', 'Error fetching project team:', error);
     return { success: false, error: error.message || "Failed to fetch project team." };
   }
 }
@@ -627,7 +628,7 @@ export async function getUserCredits() {
 
     return { success: true, credits: user.credits };
   } catch (error: any) {
-    console.error("Error fetching user credits:", error);
+    logError('GetUserCredits', 'Error fetching user credits:', error);
     return { success: false, error: error.message || "Failed to fetch credits." };
   }
 }

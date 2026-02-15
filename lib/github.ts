@@ -2,6 +2,7 @@ import { prisma } from "@/prisma/client"
 import { Octokit } from "octokit"
 import axios from "axios"
 import { aiSummarizeCommit } from "./gemini"
+import { logError, logInfo, logDebug } from './logger'
 
 export const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
@@ -44,7 +45,7 @@ export const getRepoCommits = async (githubUrl: string) => {
       commitDate: commit.commit?.author?.date ?? "",
     }))
   } catch (error) {
-    console.error("Error fetching commit hashes:", error)
+    logError('GetCommits', 'Error fetching commit hashes:', error)
     return []
   }
 }
@@ -55,11 +56,11 @@ export const pollCommits = async (projectId: string, githubUrl: string) => {
     const unProcessedCommits = await filterUnprocessedCommits(projectId, RepoCommits)
 
     if (unProcessedCommits.length === 0) {
-      console.log("No new commits to process")
+      logInfo('PollCommits', 'No new commits to process')
       return { added: 0 }
     }
 
-    console.log(`Processing ${unProcessedCommits.length} new commits`)
+    logInfo('PollCommits', `Processing ${unProcessedCommits.length} new commits`, true) // Important for monitoring
 
     // Process commits in batches to avoid overwhelming the queue
     const batchSize = 5
@@ -72,7 +73,7 @@ export const pollCommits = async (projectId: string, githubUrl: string) => {
     const processedCommits: ProcessedCommit[] = []
 
     for (let batch = 0; batch < commitBatches.length; batch++) {
-      console.log(`Processing commit batch ${batch + 1}/${commitBatches.length}`)
+      logDebug('PollCommits', `Processing commit batch ${batch + 1}/${commitBatches.length}`)
 
       const batchResults = await Promise.allSettled(
         commitBatches[batch].map(async (commit) => {
@@ -88,7 +89,7 @@ export const pollCommits = async (projectId: string, githubUrl: string) => {
               summary
             }
           } catch (error) {
-            console.error(`Error processing commit ${commit.commitHash}:`, error)
+            logError('ProcessCommit', `Error processing commit ${commit.commitHash}:`, error)
             throw error
           }
         })
@@ -107,10 +108,10 @@ export const pollCommits = async (projectId: string, githubUrl: string) => {
         data: processedCommits
       })
 
-      console.log(`Successfully added ${commits.count} commits to the database`)
+      logInfo('PollCommits', `Successfully added ${commits.count} commits to the database`, true)
       return commits
     } else {
-      console.log("No commits were successfully processed")
+      logInfo('PollCommits', 'No commits were successfully processed', true)
       return { count: 0 }
     }
   } catch (error: any) {
@@ -119,7 +120,7 @@ export const pollCommits = async (projectId: string, githubUrl: string) => {
       ? error.message 
       : 'Unknown error occurred while polling commits';
     
-    console.error("Error polling commits:", error || 'Unknown error')
+    logError('PollCommits', 'Error polling commits:', error || 'Unknown error')
     return { error: errorMessage }
   }
 }
@@ -137,7 +138,7 @@ async function summerizeCommit(githubUrl: string, commitHash: string) {
     
     return await aiSummarizeCommit(data) || "";
   } catch (error) {
-    console.error(`Error getting or summarizing commit ${commitHash}:`, error);
+    logError('SummarizeCommit', `Error getting or summarizing commit ${commitHash}:`, error);
     throw error;
   }
 }
@@ -158,7 +159,7 @@ async function filterUnprocessedCommits(projectId: string, RepoCommits: CommitRe
 
     return RepoCommits.filter(commit => !processedHashes.has(commit.commitHash))
   } catch (error) {
-    console.error("Error filtering unprocessed commits:", error)
+    logError('FilterCommits', 'Error filtering unprocessed commits:', error)
     return []
   }
 }

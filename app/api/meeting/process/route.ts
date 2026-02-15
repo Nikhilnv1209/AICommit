@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/prisma/client";
 import { processMeeting } from "@/lib/assemblyai";
+import { logError } from '@/lib/logger';
 
 export async function POST(request: Request) {
   try {
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
       meeting: updatedMeeting,
     });
   } catch (error) {
-    console.error("Error processing meeting:", error);
+    logError('ProcessMeeting', 'Error processing meeting:', error);
     return NextResponse.json(
       { error: "Failed to process meeting" },
       { status: 500 }

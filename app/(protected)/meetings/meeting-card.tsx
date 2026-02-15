@@ -6,6 +6,13 @@ import { createMeeting } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { toast } from "sonner";
 
+// Development-only logging for frontend
+const devConsole = {
+  log: (...args: any[]) => process.env.NODE_ENV === 'development' && console.log(...args),
+  error: (...args: any[]) => process.env.NODE_ENV === 'development' && console.error(...args),
+  warn: (...args: any[]) => process.env.NODE_ENV === 'development' && console.warn(...args),
+};
+
 const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<void> }) => {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +117,7 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
               projectId: project.id,
             }),
           }).catch((processError) => {
-            console.error("Error processing meeting:", processError);
+            devConsole.error("Error processing meeting:", processError);
             // We don't want to stop the upload flow if processing fails
             // The meeting is still uploaded and saved to the database
           });
@@ -126,7 +133,7 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
         }
       }
     } catch (err: any) {
-      console.error(err);
+      devConsole.error(err);
       setError(err.message || "Upload failed");
       setUploading(false);
       toast.error(err.message || "Upload failed");

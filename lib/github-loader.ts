@@ -3,6 +3,7 @@ import { batchProcessDocuments } from './gemini';
 import { prisma } from '@/prisma/client';
 import { startIndexing, setTotal as setIndexTotal, setProcessed as setIndexProcessed, completeIndexing, errorIndexing } from '@/lib/indexing-progress';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
+import { devLog, devError, devWarn, logError, logInfo, logDebug, logWarning } from './logger';
 
 // Shared ignore list for non-source/binary files
 const IGNORE_FILES: string[] = [
@@ -27,9 +28,9 @@ const IGNORE_FILES: string[] = [
   '.pak',
 ];
 
-// GitHub API rate limits for unauthenticated users
+// GitHub API rate limits
 const GITHUB_API_RATE_LIMIT = {
-  maxRequestsPerHour: 60,
+  maxRequestsPerHour: 5000, // Now using authenticated limits with fallback token
   cooldownMs: 60 * 60 * 1000, // 1 hour in milliseconds
 };
 
@@ -47,7 +48,7 @@ class GithubRateLimiter {
     setInterval(() => {
       this.apiRequestCount = 0;
       this.lastResetTime = Date.now();
-      console.log('API rate limit reset via interval');
+      devLog('API rate limit reset via interval');
     }, GITHUB_API_RATE_LIMIT.cooldownMs);
   }
 
@@ -68,7 +69,7 @@ class GithubRateLimiter {
         try {
           await task();
         } catch (error) {
-          console.error('Error processing task:', error);
+          devError('Error processing task:', error);
         }
       }
     }
@@ -104,12 +105,12 @@ class GithubRateLimiter {
     if (now - this.lastResetTime >= GITHUB_API_RATE_LIMIT.cooldownMs) {
       this.apiRequestCount = 0;
       this.lastResetTime = now;
-      console.log('API rate limit reset due to time elapsed');
+      devLog('API rate limit reset due to time elapsed');
     }
 
     if (this.apiRequestCount >= GITHUB_API_RATE_LIMIT.maxRequestsPerHour) {
       const waitTime = GITHUB_API_RATE_LIMIT.cooldownMs - (now - this.lastResetTime);
-      console.log(`API rate limit reached (${this.apiRequestCount}/${GITHUB_API_RATE_LIMIT.maxRequestsPerHour}). Waiting ${waitTime}ms until reset.`);
+      devLog(`API rate limit reached (${this.apiRequestCount}/${GITHUB_API_RATE_LIMIT.maxRequestsPerHour}). Waiting ${waitTime}ms until reset.`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
       this.apiRequestCount = 0;
       this.lastResetTime = Date.now();
@@ -119,7 +120,7 @@ class GithubRateLimiter {
   private async githubApiFetch(url: string, options: AxiosRequestConfig = {}): Promise<AxiosResponse> {
     await this.enforceRateLimit();
     this.apiRequestCount++;
-    console.log(`Making GitHub API request ${this.apiRequestCount}/${GITHUB_API_RATE_LIMIT.maxRequestsPerHour}: ${url}`);
+    logDebug('GitHubAPI', `Making request ${this.apiRequestCount}/${GITHUB_API_RATE_LIMIT.maxRequestsPerHour}: ${url}`);
 
     try {
       const response = await axios.get(url, options);
@@ -128,7 +129,7 @@ class GithubRateLimiter {
       if (axios.isAxiosError(error) && error.response?.status === 403 && error.response.headers['x-ratelimit-remaining'] === '0') {
         const resetTime = parseInt(error.response.headers['x-ratelimit-reset'] || '0') * 1000;
         const waitTime = Math.max(resetTime - Date.now(), 0) + 1000;
-        console.log(`Rate limit exceeded. Waiting ${waitTime}ms until ${new Date(resetTime).toISOString()}.`);
+        logWarning('GitHubAPI', true, `Rate limit exceeded. Waiting ${waitTime}ms until ${new Date(resetTime).toISOString()}.`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         return this.githubApiFetch(url, options);
       }
@@ -137,7 +138,7 @@ class GithubRateLimiter {
   }
 
   private async fetchRawContent(url: string): Promise<string> {
-    console.log(`Fetching raw content: ${url}`);
+    logDebug('GitHubRaw', `Fetching content: ${url}`);
     const response = await axios.get<string>(url, { responseType: 'text' });
     return response.data;
   }
@@ -179,7 +180,7 @@ class GithubRateLimiter {
               metadata: { source: item.path },
             });
           } catch (error:any) {
-            console.warn(`Skipping file ${item.path} due to fetch error: ${error.message}`);
+            logWarning('GitHubLoader', `Skipping file ${item.path} due to fetch error: ${error.message}`);
           }
         } else if (item.type === 'dir') {
           await processDirectory(item.path);
@@ -188,7 +189,7 @@ class GithubRateLimiter {
     };
 
     await processDirectory();
-    console.log(`Loaded ${docs.length} documents from GitHub repository: ${githubUrl}`);
+    logInfo('GitHubLoader', `Loaded ${docs.length} documents from repository: ${githubUrl}`);
     return docs;
   }
 }
@@ -206,7 +207,7 @@ async function processEmbeddingsInBatches(
 
   for (let i = 0; i < embeddings.length; i++) {
     const embedding = embeddings[i];
-    console.log(`Processing database entry ${i + 1} of ${embeddings.length}`);
+    logDebug('EmbeddingProcessor', `Processing entry ${i + 1} of ${embeddings.length}`);
 
     const promise = (async () => {
       try {
@@ -226,11 +227,11 @@ async function processEmbeddingsInBatches(
         `;
 
         processedCount += 1;
-        console.log(`Created embedding ${i + 1} of ${embeddings.length} for file ${embedding.fileName}`);
+        logDebug('EmbeddingProcessor', `Created embedding ${i + 1} of ${embeddings.length} for file ${embedding.fileName}`);
         if (onProgress) onProgress(processedCount);
         return { success: true, id: sourceCodeEmbedding.id, fileName: embedding.fileName };
       } catch (err: any) {
-        console.error(`Error saving embedding ${i + 1} of ${embeddings.length} for ${embedding.fileName}:`, {
+        logError('EmbeddingProcessor', `Error saving embedding ${i + 1} of ${embeddings.length} for ${embedding.fileName}:`, {
           message: err.message,
           stack: err.stack,
         });
@@ -259,7 +260,9 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
   const rateLimiter = GithubRateLimiter.getInstance();
   try {
     startIndexing(projectId);
-    const docs = await rateLimiter.loadGithubRepo(githubUrl, githubToken);
+    // Use user token if provided, otherwise fall back to environment token for better rate limits
+    const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
+    const docs = await rateLimiter.loadGithubRepo(githubUrl, effectiveToken);
     const batchSize = 10;
     const allEmbeddings = await batchProcessDocuments(docs, batchSize);
     setIndexTotal(projectId, allEmbeddings.length);
@@ -268,11 +271,11 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
       setIndexProcessed(projectId, processed);
     });
 
-    console.log(`GitHub repo indexing completed. Success: ${success}, Failed: ${failed}`);
+    logInfo('IndexingComplete', `Repo indexing completed. Success: ${success}, Failed: ${failed}`, true);
     completeIndexing(projectId);
     return { success, failed };
   } catch (error: any) {
-    console.error('Error indexing GitHub repository:', {
+    logError('IndexingError', 'Error indexing GitHub repository:', {
       projectId,
       githubUrl,
       message: error.message,
@@ -289,7 +292,9 @@ export const countGithubRepoFiles = async (githubUrl: string, githubToken?: stri
   const defaultBranch = await rateLimiter.enqueue(() => rateLimiter.getDefaultBranchPublic(githubUrl, githubToken));
   const [_, __, ___, owner, repo] = githubUrl.split('/');
   const baseApiUrl = `https://api.github.com/repos/${owner}/${repo}/contents`;
-  const headers = githubToken ? { Authorization: `token ${githubToken}` } : {};
+  // Use user token if provided, otherwise fall back to environment token for better rate limits
+  const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
+  const headers = effectiveToken ? { Authorization: `token ${effectiveToken}` } : {};
 
   let count = 0;
 
