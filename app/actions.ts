@@ -6,7 +6,7 @@ import { pollCommits } from "@/lib/github";
 import { indexGithubRepo, countGithubRepoFiles } from "@/lib/github-loader";
 import { aiGenerateEmbeddings } from './../lib/gemini';
 import { streamText } from "ai";
-import { createStreamableValue } from "ai/rsc";
+import { createStreamableValue } from "@ai-sdk/rsc";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { logError, logInfo } from '@/lib/logger';
 import cloudinary from "@/lib/cloudinary";
