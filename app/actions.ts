@@ -4,10 +4,8 @@ import { prisma } from "@/prisma/client";
 import { auth } from "@clerk/nextjs/server";
 import { pollCommits } from "@/lib/github";
 import { indexGithubRepo, countGithubRepoFiles } from "@/lib/github-loader";
-import { aiGenerateEmbeddings } from './../lib/gemini';
-import { streamText } from "ai";
+import { aiGenerateEmbeddings, getStreamProvider, streamAIChat } from './../lib/ai';
 import { createStreamableValue } from "@ai-sdk/rsc";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { logError, logInfo } from '@/lib/logger';
 import cloudinary from "@/lib/cloudinary";
 import { Readable, Transform } from "node:stream";
@@ -16,12 +14,9 @@ import { getIndexingProgress as getProgress } from "@/lib/indexing-progress";
 
 const pollingProjects = new Set<string>();
 
-const google = createGoogleGenerativeAI({
-  apiKey: process.env.GEMINI_API_KEY
-});
-
 export async function askQuestion(question: string, projectId: string) {
   const stream = createStreamableValue();
+  const provider = getStreamProvider();
 
   const queryVector = await aiGenerateEmbeddings(question);
   const VectorQuery = `[${queryVector.join(",")}]`;
@@ -45,35 +40,37 @@ export async function askQuestion(question: string, projectId: string) {
 `;
   }
 
+  const prompt = `
+    AI assistant is a brand new, powerful, human-like artificial intelligence.
+    The traits of AI include expert knowledge, helpfulness, cleverness, and articulateness.
+    AI is a well-behaved and well-mannered individual.
+    AI will answer all questions in the Markdown format, including code snippets, proper Markdown formatting and emojis. Also include proper indentations and line breaks.
+    AI will not answer any questions that are not related to the context provided.
+    AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
+    If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions, including code snippets.
+    START CONTEXT BLOCK
+    ${context}
+    END OF CONTEXT BLOCK
+
+    START QUESTION
+    ${question}
+    END OF QUESTION
+    AI assistant will take into account any CONTEXT BLOCK that is provided in a conversation.
+    If the context does not provide the answer to question, the AI assistant will say, "I'm sorry, but I don't know the answer to that question".
+    AI assistant will not apologize for previous responses, but instead will indicate new information was gained.
+    AI assistant will not invent anything that is not drawn directly from the context.
+  `;
+
   (async () => {
-    const { textStream } = streamText({
-      model: google("gemini-2.0-flash-001"),
-      prompt: `
-      AI assistant is a brand new, powerful, human-like artificial intelligence.
-      The traits of AI include expert knowledge, helpfulness, cleverness, and articulateness.
-      AI is a well-behaved and well-mannered individual.
-      AI will answer all questions in the Markdown format, including code snippets, proper Markdown formatting and emojis. Also include proper indentations and line breaks.
-      AI will not answer any questions that are not related to the context provided.
-      AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
-      If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions, including code snippets.
-      START CONTEXT BLOCK
-      ${context}
-      END OF CONTEXT BLOCK
-
-      START QUESTION
-      ${question}
-      END OF QUESTION
-      AI assistant will take into account any CONTEXT BLOCK that is provided in a conversation.
-      If the context does not provide the answer to question, the AI assistant will say, "I'm sorry, but I don't know the answer to that question".
-      AI assistant will not apologize for previous responses, but instead will indicate new information was gained.
-      AI assistant will not invent anything that is not drawn directly from the context.
-      `,
-    });
-
-    for await (const delta of textStream) {
-      stream.update(delta);
+    try {
+      for await (const chunk of streamAIChat(prompt)) {
+        stream.update(chunk);
+      }
+      stream.done();
+    } catch (error) {
+      logError('AskQuestion', `Error streaming from ${provider.name}:`, error);
+      stream.error(new Error("Failed to generate response"));
     }
-    stream.done(); // Ensure the stream is finalized
   })();
 
   return {

@@ -1,7 +1,7 @@
 import { prisma } from "@/prisma/client"
 import { Octokit } from "octokit"
 import axios from "axios"
-import { aiSummarizeCommit } from "./gemini"
+import { aiSummarizeCommit } from "./ai"
 import { logError, logInfo, logDebug } from './logger'
 
 export const octokit = new Octokit({

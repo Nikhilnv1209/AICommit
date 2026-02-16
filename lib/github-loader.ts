@@ -1,5 +1,5 @@
 import { Document } from 'langchain/document';
-import { batchProcessDocuments } from './gemini';
+import { batchProcessDocuments } from './ai';
 import { prisma } from '@/prisma/client';
 import { startIndexing, setTotal as setIndexTotal, setProcessed as setIndexProcessed, completeIndexing, errorIndexing } from '@/lib/indexing-progress';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
