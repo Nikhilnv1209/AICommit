@@ -286,35 +286,35 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
   }
 };
 
-/** Count eligible files in a GitHub repo (used for credit checks) */
+/** Count eligible files in a GitHub repo (used for credit checks) - OPTIMIZED: Uses Git Trees API (3 calls instead of N) */
 export const countGithubRepoFiles = async (githubUrl: string, githubToken?: string): Promise<number> => {
   const rateLimiter = GithubRateLimiter.getInstance();
-  const defaultBranch = await rateLimiter.enqueue(() => rateLimiter.getDefaultBranchPublic(githubUrl, githubToken));
   const [_, __, ___, owner, repo] = githubUrl.split('/');
-  const baseApiUrl = `https://api.github.com/repos/${owner}/${repo}/contents`;
+  
   // Use user token if provided, otherwise fall back to environment token for better rate limits
   const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
   const headers = effectiveToken ? { Authorization: `token ${effectiveToken}` } : {};
 
-  let count = 0;
+  // Step 1: Get default branch name (1 API call)
+  const repoUrl = `https://api.github.com/repos/${owner}/${repo}`;
+  const repoResponse = await rateLimiter.apiGet(repoUrl, { headers });
+  const defaultBranch = repoResponse.data.default_branch || 'main';
 
-  const fetchContents = async (path: string): Promise<any[]> => {
-    const url = `${baseApiUrl}/${path}?ref=${defaultBranch}`;
-    const response = await rateLimiter.apiGet(url, { headers });
-    return response.data;
-  };
+  // Step 2: Get the latest commit SHA of the default branch (1 API call)
+  const branchUrl = `https://api.github.com/repos/${owner}/${repo}/branches/${defaultBranch}`;
+  const branchResponse = await rateLimiter.apiGet(branchUrl, { headers });
+  const commitSha = branchResponse.data.commit.sha;
 
-  const processDirectory = async (path: string = ''): Promise<void> => {
-    const items = await rateLimiter.enqueue(() => fetchContents(path));
-    for (const item of items) {
-      if (item.type === 'file' && !IGNORE_FILES.some((f: string) => item.name.toLowerCase().endsWith(f))) {
-        count += 1;
-      } else if (item.type === 'dir') {
-        await processDirectory(item.path);
-      }
-    }
-  };
+  // Step 3: Get entire tree recursively (1 API call - returns ALL files in one response)
+  const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`;
+  const treeResponse = await rateLimiter.apiGet(treeUrl, { headers });
+  
+  // Count files, excluding ignored extensions
+  const count = treeResponse.data.tree
+    ? treeResponse.data.tree.filter((item: any) => 
+        item.type === 'blob' && !IGNORE_FILES.some((f: string) => item.path.toLowerCase().endsWith(f))
+      ).length
+    : 0;
 
-  await processDirectory();
   return count;
 }
