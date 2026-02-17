@@ -10,7 +10,7 @@ import { logError, logInfo } from '@/lib/logger';
 import cloudinary from "@/lib/cloudinary";
 import { Readable, Transform } from "node:stream";
 import type { UploadApiResponse } from "cloudinary";
-import { getIndexingProgress as getProgress } from "@/lib/indexing-progress";
+import { getIndexingProgress as getProgress, resetIndexing } from "@/lib/indexing-progress";
 
 const pollingProjects = new Set<string>();
 
@@ -120,6 +120,38 @@ export async function getIndexingProgress(projectId: string) {
     return getProgress(projectId);
   } catch (error: any) {
     return { status: 'IDLE', processed: 0, total: 0, error: error?.message || 'Failed to get progress' } as any;
+  }
+}
+
+export async function reindexProject(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+    if (!projectId) throw new Error("Project id required");
+
+    // Verify user has access to the project
+    const project = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        userToProject: { some: { userId } },
+      },
+    });
+    if (!project) throw new Error("Project not found or access denied");
+
+    // Delete existing embeddings first
+    await prisma.sourceCodeEmbedding.deleteMany({ where: { projectId } });
+    
+    // Reset indexing status
+    await resetIndexing(projectId);
+
+    // Start indexing in background
+    indexGithubRepo(projectId, project.githubUrl!, project.githubToken || undefined).catch(err => {
+      logError('ReindexError', 'Error reindexing project:', { projectId, message: err.message });
+    });
+
+    return { success: true, message: 'Reindexing started' };
+  } catch (error: any) {
+    return { error: error?.message || 'Failed to reindex project' };
   }
 }
 

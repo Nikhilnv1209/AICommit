@@ -259,7 +259,7 @@ async function processEmbeddingsInBatches(
 export const indexGithubRepo = async (projectId: string, githubUrl: string, githubToken?: string) => {
   const rateLimiter = GithubRateLimiter.getInstance();
   try {
-    startIndexing(projectId);
+    await startIndexing(projectId);
     // Use user token if provided, otherwise fall back to environment token for better rate limits
     const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
     const docs = await rateLimiter.loadGithubRepo(githubUrl, effectiveToken);
@@ -272,7 +272,7 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
     });
 
     logInfo('IndexingComplete', `Repo indexing completed. Success: ${success}, Failed: ${failed}`, true);
-    completeIndexing(projectId);
+    await completeIndexing(projectId);
     return { success, failed };
   } catch (error: any) {
     logError('IndexingError', 'Error indexing GitHub repository:', {
@@ -281,7 +281,7 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
       message: error.message,
       stack: error.stack,
     });
-    errorIndexing(projectId, error?.message);
+    await errorIndexing(projectId, error?.message);
     throw error;
   }
 };
