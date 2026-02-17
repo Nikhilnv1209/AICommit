@@ -145,7 +145,15 @@ const CommitLogs = () => {
 
       {/* Empty state */}
       {mounted && !isLoading && !isError && commits.length === 0 && (
-        <li>No commits found.</li>
+        <li className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="rounded-full bg-muted p-4 mb-4">
+            <GitCommit className="h-8 w-8 text-muted-foreground" />
+          </div>
+          <p className="text-lg font-medium text-foreground">No commits yet</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Push some commits to your GitHub repository to see them here
+          </p>
+        </li>
       )}
 
       {/* Data items */}

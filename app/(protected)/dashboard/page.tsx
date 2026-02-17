@@ -9,7 +9,6 @@ import MeetingCard from "../meetings/meeting-card";
 import ArchiveProjectButton from "./ArchiveProjectButton";
 import InviteButton from "./InviteButton";
 import TeamMembers from "./team-members";
-import IndexingProgress from "./IndexingProgress";
 
 const DashBoard = () => {
   const { project } = useProject();
@@ -17,34 +16,40 @@ const DashBoard = () => {
   return (
     <div className="w-full">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between flex-wrap gap-4">
-        {/* GitHub link */}
         <div className="w-full sm:w-fit rounded-md bg-primary px-4 py-3">
           <div className="flex items-center">
             <Github className="text-primary-foreground size-5" />
             <div className="ml-2">
               <p className="text-sm font-medium text-primary-foreground">
-                This Project is linked to{" "}
-                <Link
-                  href={project?.githubUrl || ""}
-                  className="inline-flex items-center text-primary-foreground/80 hover:underline"
-                >
-                  {project?.githubUrl}
-                  <ExternalLinkIcon className="ml-1 size-4" />
-                </Link>
+                {project ? (
+                  <>
+                    This Project is linked to{" "}
+                    <Link
+                      href={project?.githubUrl || ""}
+                      className="inline-flex items-center text-primary-foreground/80 hover:underline"
+                    >
+                      {project?.githubUrl}
+                      <ExternalLinkIcon className="ml-1 size-4" />
+                    </Link>
+                  </>
+                ) : (
+                  "No project is added currently"
+                )}
               </p>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-4">
-          <TeamMembers />
-          <InviteButton />
-          <ArchiveProjectButton />
-        </div>
+        {project && (
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-4">
+            <TeamMembers />
+            <InviteButton />
+            <ArchiveProjectButton />
+          </div>
+        )}
       </div>
 
       <div className="mt-4">
-        <IndexingProgress />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
           <div className="lg:col-span-3">
             <AskQuestionsCard />
@@ -57,7 +62,6 @@ const DashBoard = () => {
 
       <div className="mt-8"></div>
 
-      {/* 🔹 Wrap CommitLogs with Suspense */}
       <CommitLogs />
     </div>
   );
