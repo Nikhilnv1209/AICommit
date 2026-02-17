@@ -301,10 +301,11 @@ class CohereProvider implements EmbeddingProvider {
     logger.info(`[CohereProvider] embed() called with model=${this.embedModel}`);
     
     return limiter.enqueue(async () => {
-      const response = await this.client.v2.embed({
+      const response = await this.client.embed({
         model: this.embedModel,
         texts: [text],
         inputType: 'search_document',
+        embeddingTypes: ['float'],
       });
       return response.embeddings.float[0];
     });
