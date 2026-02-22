@@ -63,8 +63,8 @@ const IndexingProgress = () => {
     );
   }
 
-  // Show status message and reindex button for ERROR or IDLE states
-  if (status === 'ERROR' || status === 'IDLE') {
+  // Show status message and reindex button for ERROR, TIMEOUT, or IDLE states
+  if (status === 'ERROR' || status === 'TIMEOUT' || status === 'IDLE') {
     return (
       <div className="my-3 p-3 border rounded-md bg-card">
         <div className="flex items-center justify-between">
@@ -73,6 +73,12 @@ const IndexingProgress = () => {
               <>
                 <XCircle className="h-4 w-4 text-red-500" />
                 <span className="text-red-600">Indexing failed</span>
+              </>
+            )}
+            {status === 'TIMEOUT' && (
+              <>
+                <AlertCircle className="h-4 w-4 text-orange-500" />
+                <span className="text-orange-600">Indexing timed out</span>
               </>
             )}
             {status === 'IDLE' && (
@@ -92,10 +98,10 @@ const IndexingProgress = () => {
             ) : (
               <RefreshCw className="h-3 w-3" />
             )}
-            {status === 'IDLE' ? 'Index' : 'Reindex'}
+            {(status === 'IDLE' || status === 'TIMEOUT') ? 'Index' : 'Reindex'}
           </button>
         </div>
-        {message && status === 'ERROR' && (
+        {(message && (status === 'ERROR' || status === 'TIMEOUT')) && (
           <p className="mt-2 text-xs text-red-500">{message}</p>
         )}
       </div>
