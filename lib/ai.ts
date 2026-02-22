@@ -15,7 +15,7 @@ const logger = winston.createLogger({
 // PROVIDER TYPES
 // ============================================================
 
-export type ProviderType = 'gemini' | 'zhipu' | 'cohere';
+export type ProviderType = 'gemini' | 'zhipu' | 'cohere' | 'sarvam';
 
 export interface AIProvider {
   // Main model (for summarization)
@@ -71,6 +71,9 @@ const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
   'embed-multilingual-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
   'embed-multilingual-light-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
   'embed-v4.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
+
+  // Sarvam models (conservative default)
+  'sarvam-m': { maxRequestsPerMinute: 60, cooldownMs: 60000 },
 };
 
 class UnifiedRateLimiter {
@@ -277,6 +280,47 @@ class ZhipuProvider implements AIProvider, EmbeddingProvider {
 }
 
 // ============================================================
+// SARVAM PROVIDER (Summarization only - no embeddings)
+// ============================================================
+
+class SarvamProvider implements AIProvider {
+  name = 'sarvam';
+  private client: any;
+  private model: string;
+
+  constructor() {
+    const OpenAI = require('openai');
+    
+    this.client = new OpenAI({
+      apiKey: process.env.SARVAM_API_KEY ?? '',
+      baseURL: 'https://api.sarvam.ai/v1',
+    });
+    
+    this.model = 'sarvam-m';
+    
+    logger.info(`Sarvam provider initialized with model: ${this.model}`);
+  }
+
+  async summarize(prompt: string): Promise<string> {
+    const limiter = getRateLimiter(this.model);
+    
+    return limiter.enqueue(async () => {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 1000,
+      });
+      return response.choices[0].message.content;
+    });
+  }
+
+  async embed(text: string): Promise<number[]> {
+    throw new Error('Sarvam does not support embeddings. Use COHERE or another provider for embeddings.');
+  }
+}
+
+// ============================================================
 // COHERE PROVIDER (Embeddings only)
 // ============================================================
 
@@ -326,6 +370,9 @@ export function getMainProvider(): AIProvider {
   const providerType = (process.env.AI_PROVIDER || 'gemini').toLowerCase() as ProviderType;
   
   switch (providerType) {
+    case 'sarvam':
+      mainProviderInstance = new SarvamProvider();
+      break;
     case 'zhipu':
       mainProviderInstance = new ZhipuProvider();
       break;
@@ -438,6 +485,44 @@ class ZhipuStreamProvider implements StreamProvider {
   }
 }
 
+class SarvamStreamProvider implements StreamProvider {
+  name = 'sarvam';
+  private client: any;
+  private model: string;
+
+  constructor() {
+    const OpenAI = require('openai');
+    
+    this.client = new OpenAI({
+      apiKey: process.env.SARVAM_API_KEY ?? '',
+      baseURL: 'https://api.sarvam.ai/v1',
+    });
+    
+    this.model = 'sarvam-m';
+    
+    logger.info(`Sarvam streaming provider initialized with model: ${this.model}`);
+  }
+
+  async *stream(prompt: string): AsyncGenerator<string, void, unknown> {
+    const limiter = getRateLimiter(this.model);
+    
+    const response = await limiter.enqueue(async () => {
+      return await this.client.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+        temperature: 0.2,
+        max_tokens: 1000,
+      });
+    });
+
+    for await (const chunk of response) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) yield content;
+    }
+  }
+}
+
 let streamProviderInstance: StreamProvider | null = null;
 
 export function getStreamProvider(): StreamProvider {
@@ -446,6 +531,9 @@ export function getStreamProvider(): StreamProvider {
   const providerType = (process.env.AI_PROVIDER || 'gemini').toLowerCase() as ProviderType;
   
   switch (providerType) {
+    case 'sarvam':
+      streamProviderInstance = new SarvamStreamProvider();
+      break;
     case 'zhipu':
       streamProviderInstance = new ZhipuStreamProvider();
       break;
