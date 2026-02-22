@@ -11,8 +11,7 @@ import cloudinary from "@/lib/cloudinary";
 import { Readable, Transform } from "node:stream";
 import type { UploadApiResponse } from "cloudinary";
 import { getIndexingProgress as getProgress, resetIndexing } from "@/lib/indexing-progress";
-
-const pollingProjects = new Set<string>();
+import { indexingManager } from "@/lib/indexing-manager";
 
 export async function askQuestion(question: string, projectId: string) {
   const stream = createStreamableValue();
@@ -117,7 +116,15 @@ export async function getIndexingProgress(projectId: string) {
     });
     if (!hasAccess) throw new Error("Project not found or access denied");
 
-    return getProgress(projectId);
+    // Use IndexingManager for consistent status
+    const status = await indexingManager.getStatus(projectId);
+    return {
+      status: status.status,
+      processed: status.processed,
+      total: status.total,
+      message: status.message,
+      isActive: status.isActive,
+    };
   } catch (error: any) {
     return { status: 'IDLE', processed: 0, total: 0, error: error?.message || 'Failed to get progress' } as any;
   }
@@ -142,14 +149,16 @@ export async function reindexProject(projectId: string) {
     await prisma.sourceCodeEmbedding.deleteMany({ where: { projectId } });
     
     // Reset indexing status
-    await resetIndexing(projectId);
+    await indexingManager.resetIndexing(projectId);
 
-    // Start indexing in background
-    indexGithubRepo(projectId, project.githubUrl!, project.githubToken || undefined).catch(err => {
-      logError('ReindexError', 'Error reindexing project:', { projectId, message: err.message });
-    });
+    // Start indexing using IndexingManager
+    const result = await indexingManager.startIndexing(projectId, project.githubUrl!, project.githubToken || undefined);
 
-    return { success: true, message: 'Reindexing started' };
+    if (!result.success) {
+      return { error: result.message };
+    }
+
+    return { success: true, message: result.message };
   } catch (error: any) {
     return { error: error?.message || 'Failed to reindex project' };
   }
@@ -193,33 +202,14 @@ export async function submitCreateForm(formdata: TFormData) {
 
     if (!project) throw new Error("Failed to create the project.");
 
-    // Start indexing the repo in the background
-    // We don't await these operations to avoid timeout issues
-    // They will run asynchronously with rate limiting
-    if (!pollingProjects.has(project.id)) {
-      pollingProjects.add(project.id);
-      Promise.resolve().then(async () => {
-        try {
-          // Index repo files
-          if (project.githubToken) {
-            await indexGithubRepo(project.id, project.githubUrl!, project.githubToken);
-          } else {
-            await indexGithubRepo(project.id, project.githubUrl!);
-          }
-
-          // Poll commits after indexing is complete
-          await pollCommits(project.id, project.githubUrl!);
-
-        } catch (error) {
-          logError('BackgroundIndexing', 'Background indexing error:', error);
-        } finally {
-          pollingProjects.delete(project.id); // Remove from polling set
-        }
-      });
-    }
+    // Start indexing using IndexingManager
+    // This handles isolation, progress tracking, and fault tolerance
+    await indexingManager.startIndexing(project.id, project.githubUrl!, project.githubToken || undefined).catch(err => {
+      logError('BackgroundIndexing', 'Background indexing error:', { projectId: project.id, message: err.message });
+    });
 
     const suffix = typeof remainingCredits === 'number' ? ` Remaining credits: ${remainingCredits}.` : '';
-    return { success: `Project "${project.name}" created successfully! Indexing has started in the background.${suffix}` };
+    return { success: `Project "${project.name}" created successfully! Indexing has started in the background.${suffix}`, projectId: project.id };
   } catch (error: any) {
     logError('ProjectCreation', 'Error creating project:', error);
     const message = error?.message || "Failed to create the project. Please try again.";
@@ -258,20 +248,21 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
-    // Start polling in the background, don't await
-    if (githubUrl && !pollingProjects.has(projectId)) {
-      pollingProjects.add(projectId);
-      Promise.resolve().then(async () => {
-        try {
-          await pollCommits(projectId, githubUrl);
-        } catch (e) {
-          // Improved error handling
-          const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
-          logError('PollCommits', 'Error polling commits in background:', errorDetails);
-        } finally {
-          pollingProjects.delete(projectId); // Remove from polling set
-        }
-      });
+    // Start polling commits in the background via IndexingManager
+    // This ensures proper isolation and doesn't block the response
+    if (githubUrl) {
+      // Get current status to avoid starting if already polling
+      const status = await indexingManager.getStatus(projectId);
+      if (!status.isActive) {
+        Promise.resolve().then(async () => {
+          try {
+            await pollCommits(projectId, githubUrl);
+          } catch (e) {
+            const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
+            logError('PollCommits', 'Error polling commits in background:', errorDetails);
+          }
+        });
+      }
     }
 
     // Return existing commits immediately
@@ -303,18 +294,18 @@ export async function getProjectCommitsPage(
     const cursor = opts?.cursor ?? null;
 
     // Kick off background polling on first page only (no cursor), same as getProjectCommits
-    if (!cursor && opts?.githubUrl && !pollingProjects.has(projectId)) {
-      pollingProjects.add(projectId);
-      Promise.resolve().then(async () => {
-        try {
-          await pollCommits(projectId, opts.githubUrl!);
-        } catch (e) {
-          const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
-          logError('PollCommits', 'Error polling commits in background:', errorDetails);
-        } finally {
-          pollingProjects.delete(projectId);
-        }
-      });
+    if (!cursor && opts?.githubUrl) {
+      const status = await indexingManager.getStatus(projectId);
+      if (!status.isActive) {
+        Promise.resolve().then(async () => {
+          try {
+            await pollCommits(projectId, opts.githubUrl!);
+          } catch (e) {
+            const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
+            logError('PollCommits', 'Error polling commits in background:', errorDetails);
+          }
+        });
+      }
     }
 
     const commits = await prisma.commit.findMany({

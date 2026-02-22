@@ -140,31 +140,9 @@ export async function getIndexingProgress(projectId: string): Promise<ProgressSt
 
     const dbStatus = (indexing.status || 'IDLE') as IndexStatus;
     
-    // If status is INDEXING, verify embeddings exist
+    // Return current status from database as-is
+    // Don't auto-complete - let the actual indexer manage state
     if (dbStatus === 'INDEXING') {
-      const embeddingCount = await prisma.sourceCodeEmbedding.count({
-        where: { projectId },
-      });
-      
-      if (embeddingCount > 0 || (indexing.total > 0 && indexing.processed >= indexing.total)) {
-        // Embeddings exist or total processed, mark as completed
-        await prisma.projectIndexing.update({
-          where: { projectId },
-          data: { 
-            status: 'COMPLETED', 
-            error: null,
-            processed: embeddingCount || indexing.total,
-            completedAt: new Date(),
-          },
-        });
-        return { 
-          status: 'COMPLETED', 
-          processed: embeddingCount || indexing.total, 
-          total: indexing.total || embeddingCount 
-        };
-      }
-      
-      // Still indexing - return stored progress
       return { 
         status: 'INDEXING', 
         processed: indexing.processed, 

@@ -1,7 +1,7 @@
 import { Document } from 'langchain/document';
 import { batchProcessDocuments } from './ai';
 import { prisma } from '@/prisma/client';
-import { startIndexing, setTotal as setIndexTotal, setProcessed as setIndexProcessed, completeIndexing, errorIndexing } from '@/lib/indexing-progress';
+import { indexingManager } from '@/lib/indexing-manager';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { devLog, devError, devWarn, logError, logInfo, logDebug, logWarning } from './logger';
 
@@ -255,24 +255,36 @@ async function processEmbeddingsInBatches(
   return { success: successCount, failed: failedCount };
 }
 
-/** Index a GitHub repository */
+/** Index a GitHub repository with IndexingManager integration */
 export const indexGithubRepo = async (projectId: string, githubUrl: string, githubToken?: string) => {
   const rateLimiter = GithubRateLimiter.getInstance();
   try {
-    await startIndexing(projectId);
+    logInfo('Indexing', `Starting indexing for project ${projectId}`);
+    
     // Use user token if provided, otherwise fall back to environment token for better rate limits
     const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
     const docs = await rateLimiter.loadGithubRepo(githubUrl, effectiveToken);
+    
+    logInfo('Indexing', `Loaded ${docs.length} documents for project ${projectId}`);
+    
     const batchSize = 10;
     const allEmbeddings = await batchProcessDocuments(docs, batchSize);
-    setIndexTotal(projectId, allEmbeddings.length);
+    
+    // Update total in database via IndexingManager
+    await indexingManager.updateProgress(projectId, 0, allEmbeddings.length);
+    logInfo('Indexing', `Processing ${allEmbeddings.length} embeddings for project ${projectId}`);
 
-    const { success, failed } = await processEmbeddingsInBatches(allEmbeddings, projectId, MAX_DB_CONCURRENCY, (processed) => {
-      setIndexProcessed(projectId, processed);
-    });
+    const { success, failed } = await processEmbeddingsInBatches(
+      allEmbeddings, 
+      projectId, 
+      MAX_DB_CONCURRENCY, 
+      async (processed) => {
+        // Update progress via IndexingManager
+        await indexingManager.updateProgress(projectId, processed, allEmbeddings.length);
+      }
+    );
 
     logInfo('IndexingComplete', `Repo indexing completed. Success: ${success}, Failed: ${failed}`, true);
-    await completeIndexing(projectId);
     return { success, failed };
   } catch (error: any) {
     logError('IndexingError', 'Error indexing GitHub repository:', {
@@ -281,7 +293,6 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
       message: error.message,
       stack: error.stack,
     });
-    await errorIndexing(projectId, error?.message);
     throw error;
   }
 };

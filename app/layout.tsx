@@ -5,6 +5,12 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "sonner";
 import QueryProvider from "@/lib/QueryProvider";
 import { ThemeProvider } from "@/components/theme/theme-provider";
+import { initServer } from "@/lib/server-init";
+
+// Initialize server on startup
+if (typeof window === 'undefined') {
+  initServer().catch(console.error);
+}
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
