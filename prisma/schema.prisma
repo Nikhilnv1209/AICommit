@@ -56,10 +56,14 @@ model ProjectIndexing {
   projectId     String   @unique
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   
-  status        String   @default("IDLE") // IDLE, INDEXING, COMPLETED, ERROR
+  status        String   @default("IDLE") // IDLE, INDEXING, COMPLETED, ERROR, TIMEOUT
   error         String?
   processed     Int      @default(0)
   total         Int      @default(0)
+  
+  // For detecting stuck indexing
+  lastHeartbeat DateTime?  // Last time indexing made progress
+  serverId      String?    // Unique ID of server instance doing the indexing
   
   startedAt     DateTime?
   completedAt   DateTime?
