@@ -1,32 +1,148 @@
 "use client";
 
-import { getIndexingProgress, reindexProject } from "@/app/actions";
+import { reindexProject } from "@/app/actions";
 import useProject from "@/hooks/use-project";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw, AlertCircle, CheckCircle, XCircle } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState, useRef } from "react";
+import { Loader2, RefreshCw, AlertCircle, XCircle } from "lucide-react";
+
+interface IndexingStatus {
+  status: string;
+  stage?: string;
+  processed: number;
+  total: number;
+  message?: string;
+  errorSummary?: string;
+}
 
 const IndexingProgress = () => {
   const { projectId } = useProject();
   const queryClient = useQueryClient();
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["indexing-progress", projectId ?? ""],
-    queryFn: async () => {
-      if (!projectId) return { status: 'IDLE', processed: 0, total: 0 };
-      return await getIndexingProgress(projectId);
-    },
-    enabled: !!projectId,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      // Stop polling when not actively indexing
-      if (status !== 'INDEXING') return false;
-      return 2000;
-    },
+  const [status, setStatus] = useState<IndexingStatus>({
+    status: 'IDLE',
+    processed: 0,
+    total: 0
   });
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  // For smooth stage transitions
+  const [displayStage, setDisplayStage] = useState<string | undefined>(undefined);
+  const [displayProgress, setDisplayProgress] = useState(0);
+  const stageStartTimeRef = useRef<number>(0);
+  const pendingStageRef = useRef<string | undefined>(undefined);
+  const pendingProgressRef = useRef<{ processed: number; total: number }>({ processed: 0, total: 0 });
+  const animationFrameRef = useRef<number | null>(null);
+  const prevStatusRef = useRef<string>('IDLE');
+
+  // Smooth progress update logic
+  const updateDisplay = () => {
+    const now = Date.now();
+    const newStage = pendingStageRef.current;
+
+    // Update stage immediately - no minimum duration delay
+    // The backend already enforces minimum stage time
+    if (newStage !== displayStage && newStage !== undefined) {
+      setDisplayStage(newStage);
+      stageStartTimeRef.current = now;
+    }
+
+    // Calculate smooth progress
+    const { processed, total } = pendingProgressRef.current;
+    let targetProgress = 0;
+
+    if (total > 0) {
+      const fileProgress = processed / total;
+
+      // Two stages: FETCHING (0-20%), PROCESSING (20-100%)
+      // Use pendingStage if displayStage not yet set
+      const effectiveStage = displayStage || pendingStageRef.current;
+      if (effectiveStage === 'FETCHING') {
+        targetProgress = fileProgress * 20;
+      } else if (effectiveStage === 'PROCESSING') {
+        targetProgress = 20 + (fileProgress * 80);
+      }
+    }
+
+    // Update display progress - use faster interpolation for responsiveness
+    setDisplayProgress(prev => {
+      const diff = targetProgress - prev;
+      // If close enough, snap to target
+      if (Math.abs(diff) < 1) return targetProgress;
+      // Otherwise move 30% of the way there for smooth but responsive animation
+      return prev + diff * 0.3;
+    });
+
+    animationFrameRef.current = requestAnimationFrame(updateDisplay);
+  };
+
+  // Start smooth animation loop
+  useEffect(() => {
+    animationFrameRef.current = requestAnimationFrame(updateDisplay);
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
+
+  // SSE connection
+  useEffect(() => {
+    if (!projectId) return;
+
+    setIsConnecting(true);
+    // Add cache-busting parameter to prevent browser caching
+    const cacheBuster = Date.now();
+    const eventSource = new EventSource(`/api/indexing-progress?projectId=${projectId}&_=${cacheBuster}`);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const prevStatus = prevStatusRef.current;
+        prevStatusRef.current = data.status;
+        setStatus(data);
+
+        // Update pending refs for smooth transitions
+        pendingStageRef.current = data.stage;
+        pendingProgressRef.current = { processed: data.processed, total: data.total };
+
+        // Note: We don't reset display state immediately when indexing completes
+        // This allows the UI to show the final 100% state briefly before hiding
+        // The parent component will switch to showing the COMPLETED/ERROR state
+
+        setIsConnecting(false);
+      } catch (e) {
+        console.error('Failed to parse SSE data:', e);
+      }
+    };
+
+    eventSource.onerror = () => {
+      console.error('SSE connection error');
+      setIsConnecting(false);
+      eventSource.close();
+    };
+
+    eventSource.onopen = () => {
+      setIsConnecting(false);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [projectId]);
 
   const reindexMutation = useMutation({
     mutationFn: async () => {
       if (!projectId) return;
+      // Reset state first so UI shows connecting state BEFORE server call
+      setStatus({ status: 'INDEXING', processed: 0, total: 0 });
+      setDisplayStage(undefined);
+      setDisplayProgress(0);
+      stageStartTimeRef.current = 0;
+      pendingStageRef.current = undefined;
+      pendingProgressRef.current = { processed: 0, total: 0 };
+      prevStatusRef.current = 'INDEXING';
+      // Wait for SSE to connect before starting indexing
+      await new Promise(resolve => setTimeout(resolve, 800));
       return await reindexProject(projectId);
     },
     onSuccess: () => {
@@ -34,54 +150,118 @@ const IndexingProgress = () => {
     },
   });
 
-  const status = data?.status as string | undefined;
-  const processed = data?.processed ?? 0;
-  const total = data?.total ?? 0;
-  const message = data?.message as string | undefined;
+  const { status: currentStatus, processed, total, message } = status;
+
 
   if (!projectId) return null;
-  if (isLoading) return null;
 
-  // Show progress bar when indexing
-  if (status === 'INDEXING') {
-    const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-    
+  // Stage display names
+  const stageLabels: Record<string, string> = {
+    FETCHING: 'Fetching files from GitHub...',
+    PROCESSING: 'Analyzing files with AI...',
+  };
+
+  // Show progress bar when indexing or connecting
+  if (currentStatus === 'INDEXING' || (isConnecting && currentStatus !== 'COMPLETED')) {
+    // Calculate percentage directly from pendingProgressRef for immediate updates
+    const { processed: pendingProcessed, total: pendingTotal } = pendingProgressRef.current;
+    // Use pendingStage if displayStage not yet set
+    const effectiveStage = displayStage || pendingStageRef.current;
+    let calculatedPct = 0;
+
+    if (pendingTotal > 0 && effectiveStage) {
+      const fileProgress = pendingProcessed / pendingTotal;
+      if (effectiveStage === 'FETCHING') {
+        calculatedPct = fileProgress * 20;
+      } else if (effectiveStage === 'PROCESSING') {
+        calculatedPct = 20 + (fileProgress * 80);
+      }
+    }
+
+    // Use the calculated percentage directly, not the smoothed displayProgress
+    const pct = Math.min(100, Math.round(calculatedPct));
+
+    const stageLabel = effectiveStage ? stageLabels[effectiveStage] : 'Indexing repository...';
+
+    // Calculate stage indicators
+    const stages = ['FETCHING', 'PROCESSING'];
+    const currentStageIndex = effectiveStage ? stages.indexOf(effectiveStage) : -1;
+
+    // Show file count during PROCESSING stage when we have data
+    // Also check pendingProgressRef as fallback since that's what's used for displayProgress
+    const hasProgressData = total > 0 || pendingProgressRef.current.total > 0;
+    const effectiveTotal = total > 0 ? total : pendingProgressRef.current.total;
+    const effectiveProcessed = total > 0 ? processed : pendingProgressRef.current.processed;
+    const showFileCount = effectiveStage === 'PROCESSING' && hasProgressData;
+
     return (
       <div className="my-3 p-3 border rounded-md bg-card">
-        <div className="flex items-center gap-2 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span className="font-medium">Indexing repository files…</span>
-          {total > 0 && <span className="text-muted-foreground">{processed}/{total} ({pct}%)</span>}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="font-medium">
+              {isConnecting ? 'Connecting...' : stageLabel}
+            </span>
+          </div>
+          {!isConnecting && (
+            <span className="text-sm text-muted-foreground">
+              {showFileCount ? `${Math.min(effectiveProcessed, effectiveTotal)}/${effectiveTotal}` : `${pct}%`}
+            </span>
+          )}
         </div>
-        <div className="mt-2 h-2 w-full bg-muted rounded">
+        <div className="mt-2 h-2 w-full bg-muted rounded-full overflow-hidden">
           <div
-            className="h-2 bg-primary rounded"
-            style={{ width: `${pct}%`, transition: 'width 0.3s ease' }}
+            className="h-2 bg-primary rounded-full transition-all duration-200 ease-linear"
+            style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : '0' }}
           />
+        </div>
+        {/* Stage indicators - 2 stages with proportional widths */}
+        <div className="mt-3 flex gap-2">
+          {stages.map((s, i) => {
+            const isActive = currentStageIndex === i;
+            const isDone = currentStageIndex > i;
+            // FETCHING gets 20% width, PROCESSING gets 80% width
+            const widthClass = i === 0 ? 'w-[20%]' : 'w-[80%]';
+            return (
+              <div key={s} className={`flex items-center gap-1.5 ${widthClass}`}>
+                <div
+                  className={`h-2 flex-1 rounded-full transition-all duration-500 ${
+                    isActive ? 'bg-primary' : isDone ? 'bg-primary/60' : 'bg-muted'
+                  }`}
+                  title={stageLabels[s]}
+                />
+                <span className={`text-[10px] uppercase tracking-wider transition-colors duration-300 whitespace-nowrap ${
+                  isActive ? 'text-primary font-medium' : isDone ? 'text-primary/60' : 'text-muted-foreground'
+                }`}>
+                  {s.toLowerCase()}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     );
   }
 
   // Show status message and reindex button for ERROR, TIMEOUT, or IDLE states
-  if (status === 'ERROR' || status === 'TIMEOUT' || status === 'IDLE') {
+  if (currentStatus === 'ERROR' || currentStatus === 'TIMEOUT' || currentStatus === 'IDLE') {
     return (
       <div className="my-3 p-3 border rounded-md bg-card">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm">
-            {status === 'ERROR' && (
+            {currentStatus === 'ERROR' && (
               <>
                 <XCircle className="h-4 w-4 text-red-500" />
                 <span className="text-red-600">Indexing failed</span>
               </>
             )}
-            {status === 'TIMEOUT' && (
+            {currentStatus === 'TIMEOUT' && (
               <>
                 <AlertCircle className="h-4 w-4 text-orange-500" />
                 <span className="text-orange-600">Indexing timed out</span>
               </>
             )}
-            {status === 'IDLE' && (
+            {currentStatus === 'IDLE' && (
               <>
                 <AlertCircle className="h-4 w-4 text-yellow-500" />
                 <span className="text-yellow-600">Not indexed</span>
@@ -98,18 +278,26 @@ const IndexingProgress = () => {
             ) : (
               <RefreshCw className="h-3 w-3" />
             )}
-            {(status === 'IDLE' || status === 'TIMEOUT') ? 'Index' : 'Reindex'}
+            {(currentStatus === 'IDLE' || currentStatus === 'TIMEOUT') ? 'Index' : 'Reindex'}
           </button>
         </div>
-        {(message && (status === 'ERROR' || status === 'TIMEOUT')) && (
-          <p className="mt-2 text-xs text-red-500">{message}</p>
+        {/* Show error summary or detailed message */}
+        {(status.errorSummary || message) && (currentStatus === 'ERROR' || currentStatus === 'TIMEOUT') && (
+          <div className="mt-2 space-y-1">
+            {status.errorSummary && (
+              <p className="text-xs font-medium text-orange-600">{status.errorSummary}</p>
+            )}
+            {message && (
+              <p className="text-xs text-red-500">{message}</p>
+            )}
+          </div>
         )}
       </div>
     );
   }
 
   // Show compact reindex button for COMPLETED state
-  if (status === 'COMPLETED') {
+  if (currentStatus === 'COMPLETED') {
     return (
       <div className="my-3 flex justify-end">
         <button
