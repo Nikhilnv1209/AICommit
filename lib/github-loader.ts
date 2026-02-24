@@ -260,29 +260,41 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
   const rateLimiter = GithubRateLimiter.getInstance();
   try {
     logInfo('Indexing', `Starting indexing for project ${projectId}`);
-    
-    // Use user token if provided, otherwise fall back to environment token for better rate limits
+
+    // Stage 1: FETCHING - loading files from GitHub
+    await indexingManager.updateStage(projectId, 'FETCHING');
+    // Small delay to allow SSE to propagate the stage change to clients
+    await new Promise(resolve => setTimeout(resolve, 200));
     const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
     const docs = await rateLimiter.loadGithubRepo(githubUrl, effectiveToken);
-    
     logInfo('Indexing', `Loaded ${docs.length} documents for project ${projectId}`);
-    
-    const batchSize = 10;
-    const allEmbeddings = await batchProcessDocuments(docs, batchSize);
-    
-    // Update total in database via IndexingManager
-    await indexingManager.updateProgress(projectId, 0, allEmbeddings.length);
-    logInfo('Indexing', `Processing ${allEmbeddings.length} embeddings for project ${projectId}`);
 
-    const { success, failed } = await processEmbeddingsInBatches(
-      allEmbeddings, 
-      projectId, 
-      MAX_DB_CONCURRENCY, 
-      async (processed) => {
-        // Update progress via IndexingManager
-        await indexingManager.updateProgress(projectId, processed, allEmbeddings.length);
+    // Stage 2: PROCESSING - generating summaries, embeddings, and saving to DB
+    await indexingManager.updateStage(projectId, 'PROCESSING');
+    // Small delay to allow SSE to propagate the stage change to clients
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // Process documents with progress updates throughout the entire stage
+    const results = await batchProcessDocuments(
+      docs,
+      async (processed, fileName) => {
+        // Update progress as each file is processed (summary + embedding generated)
+        await indexingManager.updateProgress(projectId, processed, docs.length);
+        logDebug('Indexing', `Progress: ${processed}/${docs.length} - ${fileName}`);
       }
     );
+
+    logInfo('Indexing', `Generated ${results.length} embeddings for project ${projectId}`);
+
+    // Save all embeddings to database
+    const { success, failed } = await processEmbeddingsInBatches(
+      results,
+      projectId,
+      MAX_DB_CONCURRENCY
+    );
+
+    // Record summary for error display
+    await indexingManager.recordErrorSummary(projectId, success, failed);
 
     logInfo('IndexingComplete', `Repo indexing completed. Success: ${success}, Failed: ${failed}`, true);
     return { success, failed };

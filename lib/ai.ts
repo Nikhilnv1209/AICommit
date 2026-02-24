@@ -635,7 +635,7 @@ export interface BatchResult {
 
 export const batchProcessDocuments = async (
   docs: Document[],
-  batchSize: number = 10
+  onProgress?: (processed: number, fileName: string) => void | Promise<void>
 ): Promise<BatchResult[]> => {
   const results: BatchResult[] = [];
   const mainProvider = getMainProvider();
@@ -643,41 +643,43 @@ export const batchProcessDocuments = async (
 
   logger.info(`[BatchProcess] Starting with ${docs.length} docs, mainProvider=${mainProvider.name}, embedProvider=${embedProvider.name}`);
 
-  for (let i = 0; i < docs.length; i += batchSize) {
-    const batch = docs.slice(i, i + batchSize);
-    logger.info(`[BatchProcess] Processing batch ${i / batchSize + 1}, size=${batch.length}`);
+  // Process documents one by one for granular progress updates
+  for (let i = 0; i < docs.length; i++) {
+    const doc = docs[i];
+    const source = doc.metadata.source as string;
 
     try {
-      // Generate summaries
-      const summaryPromises = batch.map(async (doc) => {
-        const source = doc.metadata.source as string;
-        const code = doc.pageContent.slice(0, 10000);
-        const prompt = `You are a senior software engineer. Explain the purpose of ${source} in under 100 words. Code: ---${code}---`;
-        return mainProvider.summarize(prompt);
+      // Generate summary for this file
+      const code = doc.pageContent.slice(0, 10000);
+      const prompt = `You are a senior software engineer. Explain the purpose of ${source} in under 100 words. Code: ---${code}---`;
+      const summary = await mainProvider.summarize(prompt);
+
+      // Generate embedding for the summary
+      const embedding = await embedProvider.embed(summary);
+
+      // Store result
+      results.push({
+        summary,
+        embedding,
+        sourceCode: doc.pageContent,
+        fileName: source,
       });
-      const summaries = await Promise.all(summaryPromises);
-      logger.info(`[BatchProcess] Generated ${summaries.length} summaries`);
 
-      // Generate embeddings
-      const embeddingPromises = summaries.map((summary) => embedProvider.embed(summary));
-      const embeddings = await Promise.all(embeddingPromises);
-      logger.info(`[BatchProcess] Generated ${embeddings.length} embeddings`);
-
-      for (let j = 0; j < batch.length; j++) {
-        results.push({
-          summary: summaries[j],
-          embedding: embeddings[j],
-          sourceCode: batch[j].pageContent,
-          fileName: batch[j].metadata.source as string,
-        });
+      // Report progress after each file
+      if (onProgress) {
+        const progressResult = onProgress(i + 1, source);
+        if (progressResult instanceof Promise) {
+          await progressResult;
+        }
       }
 
-      logger.info(`Processed batch ${i / batchSize + 1}/${Math.ceil(docs.length / batchSize)}`);
+      logger.info(`[BatchProcess] Processed ${i + 1}/${docs.length}: ${source}`);
     } catch (error) {
-      logger.error(`Error processing batch ${i / batchSize + 1}:`, error);
+      logger.error(`[BatchProcess] Error processing ${source}:`, error);
       throw error;
     }
   }
 
+  logger.info(`[BatchProcess] Completed processing ${docs.length} documents`);
   return results;
 };

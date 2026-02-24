@@ -221,11 +221,45 @@ export class IndexingManager {
 
     await prisma.projectIndexing.update({
       where: { projectId },
-      data: { 
-        processed, 
+      data: {
+        processed,
         total,
         lastHeartbeat: new Date(),
       },
+    });
+  }
+
+  /**
+   * Update current stage (FETCHING, PROCESSING)
+   * Only updates when stage actually changes - minimal DB writes
+   */
+  public async updateStage(projectId: string, stage: string): Promise<void> {
+    if (!activeIndexingJobs.has(projectId)) return;
+
+    await prisma.projectIndexing.update({
+      where: { projectId },
+      data: {
+        stage,
+        lastHeartbeat: new Date(),
+      },
+    });
+
+    logDebug('IndexingManager', `Project ${projectId} entered stage: ${stage}`);
+  }
+
+  /**
+   * Record error summary at completion
+   */
+  public async recordErrorSummary(projectId: string, successCount: number, failedCount: number): Promise<void> {
+    if (!activeIndexingJobs.has(projectId)) return;
+
+    const summary = failedCount > 0
+      ? `${successCount} files succeeded, ${failedCount} failed`
+      : undefined;
+
+    await prisma.projectIndexing.update({
+      where: { projectId },
+      data: { errorSummary: summary },
     });
   }
 
