@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
       let lastStage: string | undefined = undefined;
       let lastProcessed = -1;
       let lastTotal = -1;
+      let lastCurrentItem: string | undefined = undefined;
       let isActive = true;
 
       // Send data to client
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
         try {
           // Use $queryRaw to bypass Prisma's query cache and force a fresh database read
           const indexingRows = await prisma.$queryRaw`
-            SELECT status, stage, processed, total, error, "errorSummary"
+            SELECT status, stage, processed, total, error, "errorSummary", "currentItem"
             FROM "ProjectIndexing"
             WHERE "projectId" = ${projectId}
           `;
@@ -77,6 +78,7 @@ export async function GET(req: NextRequest) {
           let total: number;
           let message: string | undefined;
           let errorSummary: string | undefined;
+          let currentItem: string | undefined;
 
           if (!indexing) {
             // Check if embeddings exist
@@ -100,6 +102,7 @@ export async function GET(req: NextRequest) {
             total = Number(indexing.total);
             message = indexing.error || undefined;
             errorSummary = indexing.errorSummary || undefined;
+            currentItem = indexing.currentItem || undefined;
           }
 
           // Only send if something changed or it's the first check
@@ -107,15 +110,17 @@ export async function GET(req: NextRequest) {
             lastStatus !== status ||
             lastStage !== stage ||
             lastProcessed !== processed ||
-            lastTotal !== total;
+            lastTotal !== total ||
+            lastCurrentItem !== currentItem;
 
           if (hasChanged) {
             lastStatus = status;
             lastStage = stage;
             lastProcessed = processed;
             lastTotal = total;
+            lastCurrentItem = currentItem;
 
-            sendData({ status, stage, processed, total, message, errorSummary });
+            sendData({ status, stage, processed, total, message, errorSummary, currentItem });
           }
 
           // Keep connection alive with heartbeat if indexing

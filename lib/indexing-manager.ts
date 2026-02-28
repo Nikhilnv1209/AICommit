@@ -1,6 +1,6 @@
 import { logError, logInfo, logDebug } from './logger';
 import { indexGithubRepo } from './github-loader';
-import { pollCommits } from './github';
+import { pollCommits, getRepoCommits, PollCommitsProgress } from './github';
 import { prisma } from '@/prisma/client';
 import crypto from 'crypto';
 
@@ -216,7 +216,7 @@ export class IndexingManager {
   /**
    * Update progress for an active indexing job
    */
-  public async updateProgress(projectId: string, processed: number, total: number): Promise<void> {
+  public async updateProgress(projectId: string, processed: number, total: number, currentItem?: string): Promise<void> {
     if (!activeIndexingJobs.has(projectId)) return;
 
     await prisma.projectIndexing.update({
@@ -224,6 +224,7 @@ export class IndexingManager {
       data: {
         processed,
         total,
+        currentItem: currentItem || null,
         lastHeartbeat: new Date(),
       },
     });
@@ -266,7 +267,7 @@ export class IndexingManager {
   /**
    * Mark indexing as completed
    */
-  public async markAsCompleted(projectId: string, totalProcessed: number): Promise<void> {
+  public async markAsCompleted(projectId: string, totalProcessed: number, summary?: string): Promise<void> {
     activeIndexingJobs.delete(projectId);
 
     await prisma.projectIndexing.update({
@@ -276,6 +277,7 @@ export class IndexingManager {
         processed: totalProcessed,
         total: totalProcessed,
         error: null,
+        errorSummary: summary || null,
         completedAt: new Date(),
         lastHeartbeat: new Date(),
       },
@@ -383,6 +385,8 @@ export class IndexingManager {
     githubToken: string | undefined,
     abortController: AbortController
   ): Promise<void> {
+    let commitSummary = '';
+    
     try {
       // Index the repository
       const result = await indexGithubRepo(projectId, githubUrl, githubToken);
@@ -392,16 +396,32 @@ export class IndexingManager {
         return;
       }
 
-      // Mark as completed
-      await this.markAsCompleted(projectId, result.success);
-
-      // Now poll commits (this can also run in background)
-      try {
-        await pollCommits(projectId, githubUrl);
-      } catch (error) {
-        logError('IndexingManager', `Error polling commits for ${projectId}:`, error);
-        // Don't fail the whole operation if commit polling fails
+      // Check for unprocessed commits and process them if any
+      const unprocessedCount = await this.getUnprocessedCommitCount(projectId, githubUrl);
+      
+      if (unprocessedCount > 0) {
+        // Set stage to COMMIT_DIFFS
+        await this.updateStage(projectId, 'COMMIT_DIFFS');
+        await this.updateProgress(projectId, 0, unprocessedCount, 'Starting...');
+        
+        logInfo('IndexingManager', `Processing ${unprocessedCount} commits for project ${projectId}`);
+        
+        // Poll commits with progress callback
+        await pollCommits(projectId, githubUrl, (progress: PollCommitsProgress) => {
+          this.updateProgress(projectId, progress.current, progress.total, progress.currentCommit);
+        });
+        
+        // Small delay to let final progress propagate to UI
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Build summary string
+        commitSummary = `Indexed ${result.success} files | Summarized ${unprocessedCount} commits`;
+      } else {
+        commitSummary = `Indexing: ${result.success} files | Commits: No new commits`;
       }
+
+      // Mark as completed with commit summary
+      await this.markAsCompleted(projectId, result.success, commitSummary);
 
     } catch (error: any) {
       if (abortController.signal.aborted) {
@@ -410,6 +430,24 @@ export class IndexingManager {
       }
 
       await this.markAsError(projectId, error?.message || 'Unknown error during indexing');
+    }
+  }
+
+  /**
+   * Private: Get count of unprocessed commits
+   */
+  private async getUnprocessedCommitCount(projectId: string, githubUrl: string): Promise<number> {
+    try {
+      const allCommits = await getRepoCommits(githubUrl);
+      const processedCommits = await prisma.commit.findMany({
+        where: { projectId },
+        select: { commitHash: true }
+      });
+      const processedHashes = new Set(processedCommits.map(c => c.commitHash));
+      return allCommits.filter(c => !processedHashes.has(c.commitHash)).length;
+    } catch (error) {
+      logError('IndexingManager', 'Error getting unprocessed commit count:', error);
+      return 0;
     }
   }
 

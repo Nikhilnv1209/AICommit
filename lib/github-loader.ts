@@ -279,7 +279,7 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
       docs,
       async (processed, fileName) => {
         // Update progress as each file is processed (summary + embedding generated)
-        await indexingManager.updateProgress(projectId, processed, docs.length);
+        await indexingManager.updateProgress(projectId, processed, docs.length, fileName);
         logDebug('Indexing', `Progress: ${processed}/${docs.length} - ${fileName}`);
       }
     );
@@ -295,6 +295,9 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
 
     // Record summary for error display
     await indexingManager.recordErrorSummary(projectId, success, failed);
+
+    // Small delay to let final progress (100%) propagate to UI before stage changes
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     logInfo('IndexingComplete', `Repo indexing completed. Success: ${success}, Failed: ${failed}`, true);
     return { success, failed };

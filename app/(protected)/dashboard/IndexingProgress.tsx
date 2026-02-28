@@ -13,6 +13,7 @@ interface IndexingStatus {
   total: number;
   message?: string;
   errorSummary?: string;
+  currentItem?: string;
 }
 
 const IndexingProgress = () => {
@@ -24,13 +25,17 @@ const IndexingProgress = () => {
     total: 0
   });
   const [isConnecting, setIsConnecting] = useState(false);
+  const [showCompletionFeedback, setShowCompletionFeedback] = useState(false);
+  const [completionSummary, setCompletionSummary] = useState<string>('');
 
   // For smooth stage transitions
   const [displayStage, setDisplayStage] = useState<string | undefined>(undefined);
   const [displayProgress, setDisplayProgress] = useState(0);
+  const [displayCurrentItem, setDisplayCurrentItem] = useState<string>('');
   const stageStartTimeRef = useRef<number>(0);
   const pendingStageRef = useRef<string | undefined>(undefined);
   const pendingProgressRef = useRef<{ processed: number; total: number }>({ processed: 0, total: 0 });
+  const pendingCurrentItemRef = useRef<string>('');
   const animationFrameRef = useRef<number | null>(null);
   const prevStatusRef = useRef<string>('IDLE');
 
@@ -46,6 +51,11 @@ const IndexingProgress = () => {
       stageStartTimeRef.current = now;
     }
 
+    // Update current item being processed
+    if (pendingCurrentItemRef.current !== displayCurrentItem) {
+      setDisplayCurrentItem(pendingCurrentItemRef.current);
+    }
+
     // Calculate smooth progress
     const { processed, total } = pendingProgressRef.current;
     let targetProgress = 0;
@@ -53,13 +63,15 @@ const IndexingProgress = () => {
     if (total > 0) {
       const fileProgress = processed / total;
 
-      // Two stages: FETCHING (0-20%), PROCESSING (20-100%)
+      // Three stages: FETCHING (0-20%), PROCESSING (20-90%), COMMIT_DIFFS (90-100%)
       // Use pendingStage if displayStage not yet set
       const effectiveStage = displayStage || pendingStageRef.current;
       if (effectiveStage === 'FETCHING') {
         targetProgress = fileProgress * 20;
       } else if (effectiveStage === 'PROCESSING') {
-        targetProgress = 20 + (fileProgress * 80);
+        targetProgress = 20 + (fileProgress * 70);
+      } else if (effectiveStage === 'COMMIT_DIFFS') {
+        targetProgress = 90 + (fileProgress * 10);
       }
     }
 
@@ -98,12 +110,26 @@ const IndexingProgress = () => {
       try {
         const data = JSON.parse(event.data);
         const prevStatus = prevStatusRef.current;
+        
+        // Check if we just completed indexing
+        if (prevStatus === 'INDEXING' && data.status === 'COMPLETED') {
+          // Show completion feedback
+          setCompletionSummary(data.errorSummary || 'Indexing completed successfully');
+          setShowCompletionFeedback(true);
+          
+          // Auto-hide after 8 seconds
+          setTimeout(() => {
+            setShowCompletionFeedback(false);
+          }, 8000);
+        }
+        
         prevStatusRef.current = data.status;
         setStatus(data);
 
         // Update pending refs for smooth transitions
         pendingStageRef.current = data.stage;
         pendingProgressRef.current = { processed: data.processed, total: data.total };
+        pendingCurrentItemRef.current = data.currentItem || '';
 
         // Note: We don't reset display state immediately when indexing completes
         // This allows the UI to show the final 100% state briefly before hiding
@@ -159,6 +185,7 @@ const IndexingProgress = () => {
   const stageLabels: Record<string, string> = {
     FETCHING: 'Fetching files from GitHub...',
     PROCESSING: 'Analyzing files with AI...',
+    COMMIT_DIFFS: 'Summarizing commit changes...',
   };
 
   // Show progress bar when indexing or connecting
@@ -174,7 +201,9 @@ const IndexingProgress = () => {
       if (effectiveStage === 'FETCHING') {
         calculatedPct = fileProgress * 20;
       } else if (effectiveStage === 'PROCESSING') {
-        calculatedPct = 20 + (fileProgress * 80);
+        calculatedPct = 20 + (fileProgress * 70);
+      } else if (effectiveStage === 'COMMIT_DIFFS') {
+        calculatedPct = 90 + (fileProgress * 10);
       }
     }
 
@@ -184,15 +213,18 @@ const IndexingProgress = () => {
     const stageLabel = effectiveStage ? stageLabels[effectiveStage] : 'Indexing repository...';
 
     // Calculate stage indicators
-    const stages = ['FETCHING', 'PROCESSING'];
+    const stages = ['FETCHING', 'PROCESSING', 'COMMIT_DIFFS'];
     const currentStageIndex = effectiveStage ? stages.indexOf(effectiveStage) : -1;
 
-    // Show file count during PROCESSING stage when we have data
+    // Show file count during PROCESSING and COMMIT_DIFFS stages when we have data
     // Also check pendingProgressRef as fallback since that's what's used for displayProgress
     const hasProgressData = total > 0 || pendingProgressRef.current.total > 0;
     const effectiveTotal = total > 0 ? total : pendingProgressRef.current.total;
     const effectiveProcessed = total > 0 ? processed : pendingProgressRef.current.processed;
-    const showFileCount = effectiveStage === 'PROCESSING' && hasProgressData;
+    const showFileCount = (effectiveStage === 'PROCESSING' || effectiveStage === 'COMMIT_DIFFS') && hasProgressData;
+
+    // Get current item from display state
+    const currentItemDisplay = displayCurrentItem || pendingCurrentItemRef.current;
 
     return (
       <div className="my-3 p-3 border rounded-md bg-card">
@@ -209,6 +241,12 @@ const IndexingProgress = () => {
             </span>
           )}
         </div>
+        {/* Show current item being processed */}
+        {currentItemDisplay && effectiveStage !== 'FETCHING' && (
+          <div className="mt-2 text-xs text-muted-foreground truncate">
+            {effectiveStage === 'COMMIT_DIFFS' ? '📝 ' : '📄 '}{currentItemDisplay}
+          </div>
+        )}
         <div className="mt-2 h-2 w-full bg-muted rounded-full overflow-hidden">
           <div
             className="h-2 bg-primary rounded-full transition-all duration-200 ease-linear"
@@ -221,7 +259,8 @@ const IndexingProgress = () => {
             const isActive = currentStageIndex === i;
             const isDone = currentStageIndex > i;
             // FETCHING gets 20% width, PROCESSING gets 80% width
-            const widthClass = i === 0 ? 'w-[20%]' : 'w-[80%]';
+            // FETCHING: 20%, PROCESSING: 70%, COMMIT_DIFFS: 10%
+            const widthClass = i === 0 ? 'w-[20%]' : i === 1 ? 'w-[70%]' : 'w-[10%]';
             return (
               <div key={s} className={`flex items-center gap-1.5 ${widthClass}`}>
                 <div
@@ -292,6 +331,27 @@ const IndexingProgress = () => {
             )}
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Show completion feedback for a few seconds after indexing completes
+  if (currentStatus === 'COMPLETED' && showCompletionFeedback) {
+    return (
+      <div className="my-3 p-3 border rounded-md bg-card">
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-green-600">Indexing Complete!</p>
+            <p className="text-xs text-muted-foreground mt-1">{completionSummary}</p>
+          </div>
+          <button
+            onClick={() => setShowCompletionFeedback(false)}
+            className="text-muted-foreground hover:text-foreground"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
       </div>
     );
   }

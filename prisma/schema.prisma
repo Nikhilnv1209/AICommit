@@ -57,11 +57,12 @@ model ProjectIndexing {
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   
   status        String   @default("IDLE") // IDLE, INDEXING, COMPLETED, ERROR, TIMEOUT
-  stage         String?  // FETCHING, PROCESSING - updates only on stage change
+  stage         String?  // FETCHING, PROCESSING, COMMIT_DIFFS
   error         String?
   errorSummary  String?  // "8 succeeded, 2 failed" format
   processed     Int      @default(0)
   total         Int      @default(0)
+  currentItem   String?  // Current file/commit being processed
   
   // For detecting stuck indexing
   lastHeartbeat DateTime?  // Last time indexing made progress
