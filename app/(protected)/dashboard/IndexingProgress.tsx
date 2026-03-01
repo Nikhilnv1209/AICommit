@@ -117,6 +117,9 @@ const IndexingProgress = () => {
           setCompletionSummary(data.errorSummary || 'Indexing completed successfully');
           setShowCompletionFeedback(true);
           
+          // Invalidate commits query to refresh the commit list
+          queryClient.invalidateQueries({ queryKey: ["projectCommits", projectId] });
+          
           // Auto-hide after 8 seconds
           setTimeout(() => {
             setShowCompletionFeedback(false);
