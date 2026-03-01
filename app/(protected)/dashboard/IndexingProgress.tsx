@@ -4,7 +4,7 @@ import { reindexProject } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useRef } from "react";
-import { Loader2, RefreshCw, AlertCircle, XCircle } from "lucide-react";
+import { Loader2, RefreshCw, AlertCircle, XCircle, CheckCircle2, Sparkles, Zap, GitCommit, FileCode } from "lucide-react";
 
 interface IndexingStatus {
   status: string;
@@ -229,58 +229,140 @@ const IndexingProgress = () => {
     // Get current item from display state
     const currentItemDisplay = displayCurrentItem || pendingCurrentItemRef.current;
 
+    // Stage-specific styling - using app's primary violet color
+    const stageStyles: Record<string, { gradient: string; glow: string }> = {
+      FETCHING: {
+        gradient: 'from-violet-950/90 via-indigo-900/80 to-slate-950/90',
+        glow: 'shadow-violet-500/20',
+      },
+      PROCESSING: {
+        gradient: 'from-violet-950/90 via-purple-900/80 to-fuchsia-950/90',
+        glow: 'shadow-violet-500/20',
+      },
+      COMMIT_DIFFS: {
+        gradient: 'from-violet-950/90 via-indigo-900/80 to-purple-950/90',
+        glow: 'shadow-violet-500/20',
+      }
+    };
+
+    const currentStageStyle = effectiveStage ? stageStyles[effectiveStage] : stageStyles.FETCHING;
+
     return (
-      <div className="my-3 p-3 border rounded-md bg-card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="font-medium">
-              {isConnecting ? 'Connecting...' : stageLabel}
-            </span>
-          </div>
-          {!isConnecting && (
-            <span className="text-sm text-muted-foreground">
-              {showFileCount ? `${Math.min(effectiveProcessed, effectiveTotal)}/${effectiveTotal}` : `${pct}%`}
-            </span>
-          )}
+      <div className={`my-3 relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br ${currentStageStyle.gradient} ${currentStageStyle.glow} shadow-2xl min-h-[160px]`}>
+        {/* Animated background particles */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-4 left-1/4 w-1.5 h-1.5 bg-violet-400/30 rounded-full animate-pulse" style={{ animationDuration: '3s' }} />
+          <div className="absolute top-8 right-1/3 w-1 h-1 bg-violet-300/20 rounded-full animate-pulse" style={{ animationDuration: '3.5s', animationDelay: '1s' }} />
+          <div className="absolute bottom-16 left-1/3 w-1 h-1 bg-purple-300/20 rounded-full animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
+          <div className="absolute top-1/3 right-12 w-1.5 h-1.5 bg-violet-300/20 rounded-full animate-pulse" style={{ animationDuration: '4s', animationDelay: '1.5s' }} />
         </div>
-        {/* Show current item being processed */}
-        {currentItemDisplay && effectiveStage !== 'FETCHING' && (
-          <div className="mt-2 text-xs text-muted-foreground truncate">
-            {effectiveStage === 'COMMIT_DIFFS' ? '📝 ' : '📄 '}{currentItemDisplay}
-          </div>
-        )}
-        <div className="mt-2 h-2 w-full bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-2 bg-primary rounded-full transition-all duration-200 ease-linear"
-            style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : '0' }}
-          />
-        </div>
-        {/* Stage indicators - 2 stages with proportional widths */}
-        <div className="mt-3 flex gap-2">
-          {stages.map((s, i) => {
-            const isActive = currentStageIndex === i;
-            const isDone = currentStageIndex > i;
-            // FETCHING gets 20% width, PROCESSING gets 80% width
-            // FETCHING: 20%, PROCESSING: 70%, COMMIT_DIFFS: 10%
-            const widthClass = i === 0 ? 'w-[20%]' : i === 1 ? 'w-[70%]' : 'w-[10%]';
-            return (
-              <div key={s} className={`flex items-center gap-1.5 ${widthClass}`}>
-                <div
-                  className={`h-2 flex-1 rounded-full transition-all duration-500 ${
-                    isActive ? 'bg-primary' : isDone ? 'bg-primary/60' : 'bg-muted'
-                  }`}
-                  title={stageLabels[s]}
-                />
-                <span className={`text-[10px] uppercase tracking-wider transition-colors duration-300 whitespace-nowrap ${
-                  isActive ? 'text-primary font-medium' : isDone ? 'text-primary/60' : 'text-muted-foreground'
-                }`}>
-                  {s.toLowerCase()}
+
+        <div className="relative p-4 flex flex-col h-full">
+          {/* Header - All inline horizontally */}
+          <div className="flex items-center gap-3 mb-3">
+            {/* Loader */}
+            <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/30 flex-shrink-0">
+              <Loader2 className="h-5 w-5 text-white animate-[spin_2s_linear_infinite]" />
+            </div>
+
+            {/* Title and file count */}
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-semibold text-white tracking-tight">
+                {isConnecting ? 'Connecting...' : stageLabel}
+              </h3>
+              {!isConnecting && (
+                <p className="text-xs text-violet-200/60">
+                  {Math.min(effectiveProcessed, effectiveTotal)} / {effectiveTotal} files
+                </p>
+              )}
+            </div>
+
+            {/* File box - inline horizontally */}
+            <div className="w-[45%] px-3 py-2 bg-black/20 rounded-lg border border-primary/20 h-10 flex items-center flex-shrink-0">
+              {currentItemDisplay && effectiveStage !== 'FETCHING' ? (
+                <div className="flex items-center gap-2 text-sm text-violet-100/80 w-full">
+                  {effectiveStage === 'COMMIT_DIFFS' ? (
+                    <GitCommit className="w-4 h-4 text-primary flex-shrink-0" />
+                  ) : (
+                    <FileCode className="w-4 h-4 text-primary flex-shrink-0" />
+                  )}
+                  <span className="truncate font-mono text-xs">{currentItemDisplay}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-violet-200/40 w-full">
+                  <FileCode className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-xs italic">Preparing...</span>
+                </div>
+              )}
+            </div>
+
+            {/* Right: Percentage */}
+            {!isConnecting && (
+              <div className="text-right flex-shrink-0 w-16">
+                <span className="text-2xl font-bold text-white tabular-nums">
+                  {pct}
+                  <span className="text-sm text-violet-200/60">%</span>
                 </span>
               </div>
-            );
-          })}
+            )}
+          </div>
+
+          {/* Progress bar */}
+          <div className="relative h-2 bg-black/30 rounded-full overflow-hidden">
+            <div
+              className="absolute inset-0 bg-gradient-to-r from-primary via-primary/80 to-primary/60 rounded-full transition-all duration-300 ease-out"
+              style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : '0' }}
+            />
+            <div 
+              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-[shimmer_3s_ease-in-out_infinite]"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+
+          {/* Stage indicators - Slowed animations */}
+          <div className="mt-auto pt-3 flex gap-3">
+            {stages.map((s, i) => {
+              const isActive = currentStageIndex === i;
+              const isDone = currentStageIndex > i;
+              
+              return (
+                <div key={s} className="flex-1 flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-500 flex-shrink-0 ${
+                      isDone 
+                        ? 'bg-primary text-white' 
+                        : isActive 
+                          ? 'bg-white text-primary' 
+                          : 'bg-white/10 text-white/40'
+                    }`}>
+                      {isDone ? '✓' : i + 1}
+                    </div>
+                    <span className={`text-[10px] uppercase tracking-wider transition-colors duration-500 truncate ${
+                      isActive ? 'text-white font-medium' : isDone ? 'text-violet-200/70' : 'text-white/40'
+                    }`}>
+                      {s.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full overflow-hidden bg-black/30">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-700 ${
+                        isDone 
+                          ? 'w-full bg-primary' 
+                          : isActive 
+                            ? 'w-full bg-primary/60' 
+                            : 'w-0'
+                      }`}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
+
+        {/* Corner decorations */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-primary/10 to-transparent pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-primary/10 to-transparent pointer-events-none" />
       </div>
     );
   }
@@ -341,20 +423,86 @@ const IndexingProgress = () => {
   // Show completion feedback for a few seconds after indexing completes
   if (currentStatus === 'COMPLETED' && showCompletionFeedback) {
     return (
-      <div className="my-3 p-3 border rounded-md bg-card">
-        <div className="flex items-center gap-2">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-green-600">Indexing Complete!</p>
-            <p className="text-xs text-muted-foreground mt-1">{completionSummary}</p>
-          </div>
-          <button
-            onClick={() => setShowCompletionFeedback(false)}
-            className="text-muted-foreground hover:text-foreground"
-            title="Dismiss"
-          >
-            ×
-          </button>
+      <div className="my-3 relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-violet-950/90 via-indigo-900/80 to-purple-950/90 shadow-2xl min-h-[160px]">
+        {/* Animated background particles - slow pulse */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-4 left-1/4 w-2 h-2 bg-violet-400/30 rounded-full animate-pulse" style={{ animationDuration: '3s' }} />
+          <div className="absolute top-8 right-1/3 w-1.5 h-1.5 bg-purple-300/20 rounded-full animate-pulse" style={{ animationDuration: '3.5s', animationDelay: '0.5s' }} />
+          <div className="absolute bottom-16 left-1/3 w-1 h-1 bg-indigo-300/20 rounded-full animate-pulse" style={{ animationDuration: '3s', animationDelay: '1s' }} />
+          <div className="absolute top-1/3 right-12 w-2 h-2 bg-violet-300/20 rounded-full animate-pulse" style={{ animationDuration: '4s', animationDelay: '1.5s' }} />
+          
+          {/* Floating sparkles */}
+          <Sparkles className="absolute top-3 right-12 w-4 h-4 text-violet-300/40 animate-pulse" style={{ animationDuration: '3s' }} />
+          <Zap className="absolute bottom-4 left-12 w-3 h-3 text-yellow-300/30 animate-pulse" style={{ animationDelay: '2s' }} />
         </div>
+
+        <div className="relative p-4 flex flex-col h-full">
+          {/* Header - All inline horizontally */}
+          <div className="flex items-center gap-3 mb-3">
+            {/* Checkmark */}
+            <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/30 flex-shrink-0">
+              <CheckCircle2 className="h-5 w-5 text-white" strokeWidth={2.5} />
+            </div>
+
+            {/* Title */}
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-semibold text-white tracking-tight">
+                <span className="bg-gradient-to-r from-violet-300 via-purple-200 to-indigo-300 bg-clip-text text-transparent">
+                  Repository Indexed!
+                </span>
+              </h3>
+              <p className="text-xs text-violet-200/60">
+                All stages completed
+              </p>
+            </div>
+
+            {/* Summary box - inline */}
+            <div className="w-[45%] px-3 py-2 bg-black/20 rounded-lg border border-primary/20 h-10 flex items-center flex-shrink-0">
+              <p className="text-sm text-violet-100/80 truncate w-full">
+                {completionSummary}
+              </p>
+            </div>
+
+            {/* Dismiss button */}
+            <button
+              onClick={() => setShowCompletionFeedback(false)}
+              className="flex-shrink-0 p-1.5 rounded-full text-violet-200/60 hover:text-white hover:bg-white/10 transition-all duration-200"
+              title="Dismiss"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Progress bar */}
+          <div className="relative h-2 bg-black/30 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-primary via-primary/80 to-primary/60 rounded-full animate-[shimmer_3s_ease-in-out_infinite]" style={{ width: '100%' }} />
+          </div>
+
+          {/* Stage indicators */}
+          <div className="mt-auto pt-3 flex gap-3">
+            {['FETCHING', 'PROCESSING', 'COMMIT_DIFFS'].map((s, i) => (
+              <div key={s} className="flex-1 flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-primary text-white flex-shrink-0">
+                    ✓
+                  </div>
+                  <span className="text-[10px] uppercase tracking-wider text-violet-200/70 truncate">
+                    {s.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full overflow-hidden bg-black/30">
+                  <div className="h-full w-full rounded-full bg-primary" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Corner decorations */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-primary/10 to-transparent pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-primary/10 to-transparent pointer-events-none" />
       </div>
     );
   }

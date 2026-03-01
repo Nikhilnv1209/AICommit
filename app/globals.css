@@ -95,3 +95,18 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+/* Shimmer animation for completion state */
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.animate-shimmer {
+  background-size: 200% auto;
+  animation: shimmer 2s ease-in-out infinite;
+}
