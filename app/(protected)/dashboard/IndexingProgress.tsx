@@ -27,6 +27,7 @@ const IndexingProgress = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [showCompletionFeedback, setShowCompletionFeedback] = useState(false);
   const [completionSummary, setCompletionSummary] = useState<string>('');
+  const [reindexTrigger, setReindexTrigger] = useState(0);
 
   // For smooth stage transitions
   const [displayStage, setDisplayStage] = useState<string | undefined>(undefined);
@@ -157,7 +158,7 @@ const IndexingProgress = () => {
     return () => {
       eventSource.close();
     };
-  }, [projectId]);
+  }, [projectId, reindexTrigger]);
 
   const reindexMutation = useMutation({
     mutationFn: async () => {
@@ -166,13 +167,20 @@ const IndexingProgress = () => {
       setStatus({ status: 'INDEXING', processed: 0, total: 0 });
       setDisplayStage(undefined);
       setDisplayProgress(0);
+      setShowCompletionFeedback(false);
       stageStartTimeRef.current = 0;
       pendingStageRef.current = undefined;
       pendingProgressRef.current = { processed: 0, total: 0 };
       prevStatusRef.current = 'INDEXING';
-      // Wait for SSE to connect before starting indexing
-      await new Promise(resolve => setTimeout(resolve, 800));
-      return await reindexProject(projectId);
+      
+      // Start the indexing first (this will update the database)
+      await reindexProject(projectId);
+      
+      // Small delay to let the indexing status propagate to database
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Now trigger SSE reconnection AFTER indexing has started
+      setReindexTrigger(prev => prev + 1);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["indexing-progress", projectId] });
