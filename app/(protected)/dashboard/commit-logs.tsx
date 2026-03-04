@@ -67,7 +67,6 @@ const CommitLogs = () => {
     initialPageParam: null,
     enabled: !!projectId,
     refetchOnWindowFocus: false,
-    staleTime: 1000 * 60 * 5,
   });
 
   // Ensure server and client render the same initial markup to avoid hydration mismatches

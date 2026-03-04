@@ -15,7 +15,7 @@ const logger = winston.createLogger({
 // PROVIDER TYPES
 // ============================================================
 
-export type ProviderType = 'gemini' | 'zhipu' | 'cohere';
+export type ProviderType = 'gemini' | 'zhipu' | 'cohere' | 'sarvam';
 
 export interface AIProvider {
   // Main model (for summarization)
@@ -71,6 +71,9 @@ const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
   'embed-multilingual-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
   'embed-multilingual-light-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
   'embed-v4.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
+
+  // Sarvam models (conservative default)
+  'sarvam-m': { maxRequestsPerMinute: 60, cooldownMs: 60000 },
 };
 
 class UnifiedRateLimiter {
@@ -277,6 +280,47 @@ class ZhipuProvider implements AIProvider, EmbeddingProvider {
 }
 
 // ============================================================
+// SARVAM PROVIDER (Summarization only - no embeddings)
+// ============================================================
+
+class SarvamProvider implements AIProvider {
+  name = 'sarvam';
+  private client: any;
+  private model: string;
+
+  constructor() {
+    const OpenAI = require('openai');
+    
+    this.client = new OpenAI({
+      apiKey: process.env.SARVAM_API_KEY ?? '',
+      baseURL: 'https://api.sarvam.ai/v1',
+    });
+    
+    this.model = 'sarvam-m';
+    
+    logger.info(`Sarvam provider initialized with model: ${this.model}`);
+  }
+
+  async summarize(prompt: string): Promise<string> {
+    const limiter = getRateLimiter(this.model);
+    
+    return limiter.enqueue(async () => {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 1000,
+      });
+      return response.choices[0].message.content;
+    });
+  }
+
+  async embed(text: string): Promise<number[]> {
+    throw new Error('Sarvam does not support embeddings. Use COHERE or another provider for embeddings.');
+  }
+}
+
+// ============================================================
 // COHERE PROVIDER (Embeddings only)
 // ============================================================
 
@@ -326,6 +370,9 @@ export function getMainProvider(): AIProvider {
   const providerType = (process.env.AI_PROVIDER || 'gemini').toLowerCase() as ProviderType;
   
   switch (providerType) {
+    case 'sarvam':
+      mainProviderInstance = new SarvamProvider();
+      break;
     case 'zhipu':
       mainProviderInstance = new ZhipuProvider();
       break;
@@ -438,6 +485,44 @@ class ZhipuStreamProvider implements StreamProvider {
   }
 }
 
+class SarvamStreamProvider implements StreamProvider {
+  name = 'sarvam';
+  private client: any;
+  private model: string;
+
+  constructor() {
+    const OpenAI = require('openai');
+    
+    this.client = new OpenAI({
+      apiKey: process.env.SARVAM_API_KEY ?? '',
+      baseURL: 'https://api.sarvam.ai/v1',
+    });
+    
+    this.model = 'sarvam-m';
+    
+    logger.info(`Sarvam streaming provider initialized with model: ${this.model}`);
+  }
+
+  async *stream(prompt: string): AsyncGenerator<string, void, unknown> {
+    const limiter = getRateLimiter(this.model);
+    
+    const response = await limiter.enqueue(async () => {
+      return await this.client.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+        temperature: 0.2,
+        max_tokens: 1000,
+      });
+    });
+
+    for await (const chunk of response) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) yield content;
+    }
+  }
+}
+
 let streamProviderInstance: StreamProvider | null = null;
 
 export function getStreamProvider(): StreamProvider {
@@ -446,6 +531,9 @@ export function getStreamProvider(): StreamProvider {
   const providerType = (process.env.AI_PROVIDER || 'gemini').toLowerCase() as ProviderType;
   
   switch (providerType) {
+    case 'sarvam':
+      streamProviderInstance = new SarvamStreamProvider();
+      break;
     case 'zhipu':
       streamProviderInstance = new ZhipuStreamProvider();
       break;
@@ -547,7 +635,7 @@ export interface BatchResult {
 
 export const batchProcessDocuments = async (
   docs: Document[],
-  batchSize: number = 10
+  onProgress?: (processed: number, fileName: string) => void | Promise<void>
 ): Promise<BatchResult[]> => {
   const results: BatchResult[] = [];
   const mainProvider = getMainProvider();
@@ -555,41 +643,43 @@ export const batchProcessDocuments = async (
 
   logger.info(`[BatchProcess] Starting with ${docs.length} docs, mainProvider=${mainProvider.name}, embedProvider=${embedProvider.name}`);
 
-  for (let i = 0; i < docs.length; i += batchSize) {
-    const batch = docs.slice(i, i + batchSize);
-    logger.info(`[BatchProcess] Processing batch ${i / batchSize + 1}, size=${batch.length}`);
+  // Process documents one by one for granular progress updates
+  for (let i = 0; i < docs.length; i++) {
+    const doc = docs[i];
+    const source = doc.metadata.source as string;
 
     try {
-      // Generate summaries
-      const summaryPromises = batch.map(async (doc) => {
-        const source = doc.metadata.source as string;
-        const code = doc.pageContent.slice(0, 10000);
-        const prompt = `You are a senior software engineer. Explain the purpose of ${source} in under 100 words. Code: ---${code}---`;
-        return mainProvider.summarize(prompt);
+      // Generate summary for this file
+      const code = doc.pageContent.slice(0, 10000);
+      const prompt = `You are a senior software engineer. Explain the purpose of ${source} in under 100 words. Code: ---${code}---`;
+      const summary = await mainProvider.summarize(prompt);
+
+      // Generate embedding for the summary
+      const embedding = await embedProvider.embed(summary);
+
+      // Store result
+      results.push({
+        summary,
+        embedding,
+        sourceCode: doc.pageContent,
+        fileName: source,
       });
-      const summaries = await Promise.all(summaryPromises);
-      logger.info(`[BatchProcess] Generated ${summaries.length} summaries`);
 
-      // Generate embeddings
-      const embeddingPromises = summaries.map((summary) => embedProvider.embed(summary));
-      const embeddings = await Promise.all(embeddingPromises);
-      logger.info(`[BatchProcess] Generated ${embeddings.length} embeddings`);
-
-      for (let j = 0; j < batch.length; j++) {
-        results.push({
-          summary: summaries[j],
-          embedding: embeddings[j],
-          sourceCode: batch[j].pageContent,
-          fileName: batch[j].metadata.source as string,
-        });
+      // Report progress after each file
+      if (onProgress) {
+        const progressResult = onProgress(i + 1, source);
+        if (progressResult instanceof Promise) {
+          await progressResult;
+        }
       }
 
-      logger.info(`Processed batch ${i / batchSize + 1}/${Math.ceil(docs.length / batchSize)}`);
+      logger.info(`[BatchProcess] Processed ${i + 1}/${docs.length}: ${source}`);
     } catch (error) {
-      logger.error(`Error processing batch ${i / batchSize + 1}:`, error);
+      logger.error(`[BatchProcess] Error processing ${source}:`, error);
       throw error;
     }
   }
 
+  logger.info(`[BatchProcess] Completed processing ${docs.length} documents`);
   return results;
 };

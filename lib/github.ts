@@ -50,56 +50,71 @@ export const getRepoCommits = async (githubUrl: string) => {
   }
 }
 
-export const pollCommits = async (projectId: string, githubUrl: string) => {
+export type PollCommitsProgress = {
+  current: number;
+  total: number;
+  currentCommit?: string;
+  success: number;
+  failed: number;
+};
+
+export const pollCommits = async (
+  projectId: string,
+  githubUrl: string,
+  onProgress?: (progress: PollCommitsProgress) => void
+) => {
   try {
     const RepoCommits = await getRepoCommits(githubUrl)
     const unProcessedCommits = await filterUnprocessedCommits(projectId, RepoCommits)
 
     if (unProcessedCommits.length === 0) {
       logInfo('PollCommits', 'No new commits to process')
-      return { added: 0 }
+      return { added: 0, success: 0, failed: 0 }
     }
 
-    logInfo('PollCommits', `Processing ${unProcessedCommits.length} new commits`, true) // Important for monitoring
-
-    // Process commits in batches to avoid overwhelming the queue
-    const batchSize = 5
-    const commitBatches = []
-
-    for (let i = 0; i < unProcessedCommits.length; i += batchSize) {
-      commitBatches.push(unProcessedCommits.slice(i, i + batchSize))
-    }
+    logInfo('PollCommits', `Processing ${unProcessedCommits.length} new commits`, true)
 
     const processedCommits: ProcessedCommit[] = []
+    let successCount = 0
+    let failedCount = 0
 
-    for (let batch = 0; batch < commitBatches.length; batch++) {
-      logDebug('PollCommits', `Processing commit batch ${batch + 1}/${commitBatches.length}`)
+    // Process commits one by one to report per-commit progress
+    for (let i = 0; i < unProcessedCommits.length; i++) {
+      const commit = unProcessedCommits[i]
+      
+      // Report progress before processing each commit
+      onProgress?.({
+        current: i,
+        total: unProcessedCommits.length,
+        currentCommit: commit.commitMessage?.split('\n')[0] || commit.commitHash.substring(0, 7),
+        success: successCount,
+        failed: failedCount
+      })
 
-      const batchResults = await Promise.allSettled(
-        commitBatches[batch].map(async (commit) => {
-          try {
-            const summary = await summerizeCommit(githubUrl, commit.commitHash)
-            return {
-              projectId,
-              commitHash: commit.commitHash,
-              commitAuthorName: commit.commitAuthorName,
-              commitAuthorAvatar: commit.commitAuthorAvatar,
-              commitMessage: commit.commitMessage,
-              commitDate: commit.commitDate,
-              summary
-            }
-          } catch (error) {
-            logError('ProcessCommit', `Error processing commit ${commit.commitHash}:`, error)
-            throw error
-          }
+      try {
+        const summary = await summerizeCommit(githubUrl, commit.commitHash)
+        processedCommits.push({
+          projectId,
+          commitHash: commit.commitHash,
+          commitAuthorName: commit.commitAuthorName,
+          commitAuthorAvatar: commit.commitAuthorAvatar,
+          commitMessage: commit.commitMessage,
+          commitDate: commit.commitDate,
+          summary
         })
-      )
+        successCount++
+      } catch (error) {
+        logError('ProcessCommit', `Error processing commit ${commit.commitHash}:`, error)
+        failedCount++
+      }
 
-      // Filter successful results and add to processed commits
-      batchResults.forEach(result => {
-        if (result.status === "fulfilled") {
-          processedCommits.push(result.value)
-        }
+      // Report progress after processing each commit
+      onProgress?.({
+        current: i + 1,
+        total: unProcessedCommits.length,
+        currentCommit: commit.commitMessage?.split('\n')[0] || commit.commitHash.substring(0, 7),
+        success: successCount,
+        failed: failedCount
       })
     }
 
@@ -109,19 +124,18 @@ export const pollCommits = async (projectId: string, githubUrl: string) => {
       })
 
       logInfo('PollCommits', `Successfully added ${commits.count} commits to the database`, true)
-      return commits
+      return { count: commits.count, success: successCount, failed: failedCount }
     } else {
       logInfo('PollCommits', 'No commits were successfully processed', true)
-      return { count: 0 }
+      return { count: 0, success: successCount, failed: failedCount }
     }
   } catch (error: any) {
-    // Improved error handling
     const errorMessage = error && typeof error === 'object' && error.message 
       ? error.message 
       : 'Unknown error occurred while polling commits';
     
     logError('PollCommits', 'Error polling commits:', error || 'Unknown error')
-    return { error: errorMessage }
+    return { error: errorMessage, success: 0, failed: 0, count: 0 }
   }
 }
 

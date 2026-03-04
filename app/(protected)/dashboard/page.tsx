@@ -9,6 +9,7 @@ import MeetingCard from "../meetings/meeting-card";
 import ArchiveProjectButton from "./ArchiveProjectButton";
 import InviteButton from "./InviteButton";
 import TeamMembers from "./team-members";
+import IndexingProgress from "./IndexingProgress";
 
 const DashBoard = () => {
   const { project } = useProject();
@@ -48,6 +49,8 @@ const DashBoard = () => {
           </div>
         )}
       </div>
+
+      {project && <IndexingProgress />}
 
       <div className="mt-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">

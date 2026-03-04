@@ -9,11 +9,13 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import useProject from "@/hooks/use-project";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 
 const CreatePage = () => {
   const { register, handleSubmit, reset, watch, formState: { errors, isSubmitting } } = useForm<TFormData>({ resolver: zodResolver(createFormSchema) })
-  const { refreshProjects } = useProject();
+  const { refreshProjects, setProjectId } = useProject();
+  const router = useRouter();
 
   const repoUrl = watch("repoUrl");
   const githubToken = watch("githubToken");
@@ -42,6 +44,12 @@ const CreatePage = () => {
         toast.success(response.success); // Show success toast
         reset(); // Reset form on success
         refreshProjects(); // Refresh projects list
+
+        // Set the newly created project as selected and redirect to dashboard
+        if (response.projectId) {
+          setProjectId(response.projectId);
+          router.push("/dashboard");
+        }
       }
   } 
 
