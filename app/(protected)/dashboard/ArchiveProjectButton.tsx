@@ -34,13 +34,14 @@ const ArchiveProjectButton = () => {
 
   return (
     <Button
-      variant="destructive"
+      variant="ghost"
+      size="sm"
       onClick={handleArchive}
       disabled={isPending || !project}
-      className="px-2 sm:px-4"
+      className="px-2 text-destructive hover:bg-destructive/10 hover:text-destructive sm:px-3"
     >
       <Archive className="h-4 w-4" />
-      <span className="ml-2 hidden sm:inline">{isPending ? "Archiving..." : "Archive Project"}</span>
+      <span className="ml-2 hidden sm:inline">{isPending ? "Archiving…" : "Archive"}</span>
     </Button>
   );
 };

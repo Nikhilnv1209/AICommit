@@ -1,24 +1,15 @@
 "use client";
-import { Button } from "@/components/ui/button";
-import { Presentation, Upload } from "lucide-react";
+import { Loader2, Upload } from "lucide-react";
 import React, { useRef, useState } from "react";
 import { createMeeting } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { toast } from "sonner";
-
-// Development-only logging for frontend
-const devConsole = {
-  log: (...args: any[]) => process.env.NODE_ENV === 'development' && console.log(...args),
-  error: (...args: any[]) => process.env.NODE_ENV === 'development' && console.error(...args),
-  warn: (...args: any[]) => process.env.NODE_ENV === 'development' && console.warn(...args),
-};
 
 const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<void> }) => {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Get project context
   const { project } = useProject();
 
   const onPickFile = () => inputRef.current?.click();
@@ -39,7 +30,6 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
     setUploading(true);
 
     try {
-      // 1) Ask server for a signed payload (no file sent to server)
       const signRes = await fetch("/api/cloudinary/sign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -48,7 +38,6 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
       if (!signRes.ok) throw new Error("Failed to get Cloudinary signature");
       const { timestamp, folder, resource_type, apiKey, cloudName, signature } = await signRes.json();
 
-      // 2) Upload directly to Cloudinary with progress via XHR
       const form = new FormData();
       form.append("file", file);
       form.append("api_key", apiKey);
@@ -60,7 +49,6 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
 
       const xhr = new XMLHttpRequest();
       const done: Promise<{ secure_url: string }> = new Promise((resolve, reject) => {
-        // Progress handled by toast only; no inline UI updates
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
@@ -79,7 +67,6 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
       xhr.open("POST", uploadUrl);
       xhr.send(form);
 
-      // Show toast around the upload promise and unwrap the result
       const uploadToast = toast.promise(done, {
         loading: "Uploading audio to Cloudinary...",
         success: "Upload complete",
@@ -87,7 +74,6 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
       });
       const json = await uploadToast.unwrap();
 
-      // Save meeting info to database
       if (project?.id) {
         const saveToast = toast.promise(
           createMeeting(project.id, file.name, json.secure_url),
@@ -99,15 +85,12 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
         );
         const result = await saveToast.unwrap();
         if (result.success && result.meeting) {
-          // Call the upload complete callback to refresh the meetings list
           if (onUploadComplete) {
-            // Await the parent refresh so loader hides after list updates
             try {
               await onUploadComplete();
             } catch (_) {}
           }
 
-          // Process the meeting with AssemblyAI in the background (fire and forget)
           fetch("/api/meeting/process", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -116,14 +99,9 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
               meetingId: result.meeting.id,
               projectId: project.id,
             }),
-          }).catch((processError) => {
-            devConsole.error("Error processing meeting:", processError);
-            // We don't want to stop the upload flow if processing fails
-            // The meeting is still uploaded and saved to the database
-          });
-          toast.message("Processing meeting...", { description: "We’ll populate issues shortly." });
+          }).catch(() => {});
+          toast.message("Processing meeting...", { description: "We'll populate issues shortly." });
 
-          // Reset to initial state after meetings list refresh (or immediately if no callback)
           setUploading(false);
           if (inputRef.current) inputRef.current.value = "";
         } else {
@@ -133,7 +111,6 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
         }
       }
     } catch (err: any) {
-      devConsole.error(err);
       setError(err.message || "Upload failed");
       setUploading(false);
       toast.error(err.message || "Upload failed");
@@ -142,38 +119,38 @@ const MeetingCard = ({ onUploadComplete }: { onUploadComplete?: () => Promise<vo
 
   return (
     <div className="h-full w-full">
-      <div className="w-full h-full flex items-center justify-center border border-sidebar-border bg-sidebar shadow rounded-lg py-5">
-        <div className="flex flex-col items-center gap-3 sm:gap-4 text-center p-4 sm:p-5 w-full">
-          <Presentation className="animate-bounce text-foreground" size={32} />
-          <div>
-            <h2 className="text-lg sm:text-xl font-semibold">Create a New Meeting</h2>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              Analyze your meeting with AICommit — powered by AI.
-            </p>
-          </div>
-
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".mp3,audio/mpeg"
-            className="hidden"
-            onChange={onFileChange}
-          />
-
-          <Button onClick={onPickFile} disabled={uploading} className="w-full sm:w-auto">
-            <span className="flex items-center gap-2 px-2 py-1.5 sm:px-4 sm:py-2">
-              <Upload className={uploading ? "animate-pulse" : ""} size={18} />
-              {uploading ? "Uploading..." : "Upload Meeting"}
-            </span>
-          </Button>
-
-          {error && (
-            <div className="w-full mt-2 text-xs sm:text-sm text-red-500">
-              {error}
-            </div>
+      <button
+        type="button"
+        onClick={onPickFile}
+        disabled={uploading}
+        className="group flex h-full w-full flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border bg-card p-6 text-center transition-colors hover:border-primary/40 hover:bg-primary/[0.02] disabled:cursor-wait disabled:opacity-60"
+      >
+        <div className="flex size-11 items-center justify-center rounded-lg border border-border bg-background transition-colors group-hover:border-primary/30">
+          {uploading ? (
+            <Loader2 className="size-5 animate-spin text-primary" />
+          ) : (
+            <Upload className="size-5 text-primary" />
           )}
         </div>
-      </div>
+        <div>
+          <p className="font-mono text-sm font-medium">
+            {uploading ? "uploading" : "upload meeting"}
+          </p>
+          <p className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+            drop or select an .mp3 to transcribe
+          </p>
+        </div>
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".mp3,audio/mpeg"
+        className="hidden"
+        onChange={onFileChange}
+      />
+      {error && (
+        <p className="mt-2 font-mono text-[11px] text-destructive">{error}</p>
+      )}
     </div>
   );
 };

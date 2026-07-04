@@ -4,7 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import useProject from "@/hooks/use-project"
 import { useQuery } from "@tanstack/react-query";
 import AskQuestionsCard from "../dashboard/ask-questions-card";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import MDEditor from "@uiw/react-md-editor";
 import CodeReferences from "../dashboard/code-references";
 import { useTheme } from "next-themes";
@@ -41,12 +41,12 @@ const QAPage = () => {
       <div className="w-full">
         <AskQuestionsCard />
         <div className="h-4"></div>
-        <h1 className="text-xl font-semibold mb-2">Saved Questions</h1>
+        <h1 className="font-mono text-[11px] text-primary mb-3">{"// saved questions"}</h1>
         <div className="flex flex-col gap-4">
           {questions?.map((question, index) =>
             <React.Fragment key={question.id}>
               <SheetTrigger onClick={() => setquestionIndex(index)} className="w-full text-left">
-                <div className="flex items-start gap-3 bg-card text-card-foreground rounded-lg p-3 shadow border border-border w-full">
+                <div className="flex items-start gap-3 bg-card text-card-foreground rounded-lg p-3 border border-border w-full">
                   <img className="rounded-full object-contain mt-1" height={32} width={32} src={question.user.imageUrl ?? ""}/>
 
                   <div className="flex flex-col text-left flex-grow min-w-0">
@@ -75,7 +75,7 @@ const QAPage = () => {
               className="w-full sm:max-w-none sm:w-[90vw] md:w-[70vw] lg:w-[60vw] xl:w-[50vw] h-screen flex flex-col p-4 sm:p-6"
             >
               <SheetHeader className="flex-shrink-0">
-                <SheetTitle className="break-words text-base sm:text-lg md:text-xl">
+                <SheetTitle className="break-words font-mono text-base sm:text-lg md:text-xl">
                   {question.question}
                 </SheetTitle>
               </SheetHeader>

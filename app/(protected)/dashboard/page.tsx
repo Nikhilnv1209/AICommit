@@ -16,56 +16,59 @@ const DashBoard = () => {
 
   return (
     <div className="w-full">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between flex-wrap gap-4">
-        <div className="w-full sm:w-fit rounded-md bg-primary px-4 py-3">
-          <div className="flex items-center">
-            <Github className="text-primary-foreground size-5" />
-            <div className="ml-2">
-              <p className="text-sm font-medium text-primary-foreground">
-                {project ? (
-                  <>
-                    This Project is linked to{" "}
-                    <Link
-                      href={project?.githubUrl || ""}
-                      className="inline-flex items-center text-primary-foreground/80 hover:underline"
-                    >
-                      {project?.githubUrl}
-                      <ExternalLinkIcon className="ml-1 size-4" />
-                    </Link>
-                  </>
-                ) : (
-                  "No project is added currently"
-                )}
-              </p>
+      {/* Workspace header */}
+      <div className="border-b border-border pb-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-4 py-2.5">
+              <Github className="size-4 shrink-0 text-primary" />
+              {project ? (
+                <p className="font-mono text-xs">
+                  <span className="text-muted-foreground">repo </span>
+                  <Link
+                    href={project.githubUrl || ""}
+                    target="_blank"
+                    className="text-primary hover:underline"
+                  >
+                    {project.githubUrl}
+                    <ExternalLinkIcon className="ml-1 inline size-3" />
+                  </Link>
+                </p>
+              ) : (
+                <p className="font-mono text-xs text-muted-foreground">no project linked</p>
+              )}
             </div>
+            {project && (
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2.5">
+                <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+                <span className="font-mono text-xs text-muted-foreground">active</span>
+              </div>
+            )}
           </div>
+          {project && (
+            <div className="flex flex-wrap items-center gap-2">
+              <TeamMembers />
+              <InviteButton />
+              <ArchiveProjectButton />
+            </div>
+          )}
         </div>
-
-        {project && (
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-4">
-            <TeamMembers />
-            <InviteButton />
-            <ArchiveProjectButton />
-          </div>
-        )}
       </div>
 
       {project && <IndexingProgress />}
 
-      <div className="mt-4">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-          <div className="lg:col-span-3">
-            <AskQuestionsCard />
-          </div>
-          <div className="lg:col-span-2 w-full">
-            <MeetingCard />
-          </div>
+      <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-5">
+        <div className="lg:col-span-3">
+          <AskQuestionsCard />
+        </div>
+        <div className="lg:col-span-2">
+          <MeetingCard />
         </div>
       </div>
 
-      <div className="mt-8"></div>
-
-      <CommitLogs />
+      <div className="mt-5">
+        <CommitLogs />
+      </div>
     </div>
   );
 };

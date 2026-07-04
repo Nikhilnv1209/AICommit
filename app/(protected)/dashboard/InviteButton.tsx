@@ -32,16 +32,16 @@ const InviteButton = () => {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button className="px-2 sm:px-4">
+        <Button variant="outline" size="sm" className="px-2 sm:px-3">
           <UserPlus className="h-4 w-4" />
-          <span className="ml-2 hidden sm:inline">Invite Members</span>
+          <span className="ml-2 hidden sm:inline">Invite</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="p-10">
+      <DialogContent className="gap-0 p-6">
         <DialogHeader>
-          <DialogTitle>Invite team members</DialogTitle>
-          <DialogDescription>
-            Ask team members to copy and paste this link
+          <DialogTitle className="font-mono text-sm">invite team members</DialogTitle>
+          <DialogDescription className="font-mono text-[11px]">
+            ask teammates to copy and paste this link
           </DialogDescription>
         </DialogHeader>
         <div className="flex items-center space-x-2">

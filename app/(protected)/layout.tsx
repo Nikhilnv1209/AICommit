@@ -12,17 +12,16 @@ const SideBarLayout = ({ children }: Props) => {
   return (
     <SidebarProvider>
       <AppSidebar />
-      <main className='w-full m-2 overflow-x-hidden'>
-        <div className='flex items-center gap-2 border-sidebar-border bg-sidebar border shadow rounded-md px-4 py-2'>
-            <SidebarTrigger className="-ml-2 md:hidden" />
-            {/* Seachbar component */}
+      <main className="w-full overflow-x-hidden p-2 md:p-3">
+        <div className="flex h-14 items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar px-4">
+            <SidebarTrigger className="-ml-1 md:hidden" />
             <div className="ml-auto flex items-center gap-2">
               <ThemeSwitcher />
               <UserButton />
             </div>
         </div>
           {/* main content */}
-          <div className='border-sidebar-border bg-sidebar border shadow rounded-md overflow-x-hidden overflow-y-auto h-[calc(100vh-5rem)] p-4 mt-2'>
+          <div className="mt-2 h-[calc(100vh-5.5rem)] overflow-y-auto overflow-x-hidden rounded-lg border border-sidebar-border bg-background p-4 sm:p-6">
             {children}
           </div>
       </main>

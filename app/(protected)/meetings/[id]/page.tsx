@@ -55,11 +55,11 @@ const MeetingPage = () => {
   };
 
   if (status === "pending") {
-    return <div>Loading...</div>;
+    return <div className="font-mono text-xs text-muted-foreground">loading…</div>;
   }
 
   if (status === "error" || !meeting) {
-    return <div>Error loading meeting.</div>;
+    return <div className="font-mono text-xs text-destructive">error loading meeting</div>;
   }
 
   return (
@@ -70,7 +70,7 @@ const MeetingPage = () => {
             <Video size={28} className="md:h-8 md:w-8" />
           </div>
           <div className="flex flex-col">
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">{meeting.name}</h1>
+            <h1 className="font-mono text-2xl md:text-3xl font-medium tracking-tight">{meeting.name}</h1>
             <div className="flex flex-wrap items-center gap-3 text-muted-foreground mt-2">
               <div className="inline-flex items-center gap-2 text-sm">
                 <CalendarDays className="h-4 w-4" />
@@ -85,7 +85,7 @@ const MeetingPage = () => {
         </div>
 
         <div className="mt-6 md:mt-8">
-          <h2 className="text-xl md:text-2xl font-semibold mb-4 flex items-center gap-2">
+          <h2 className="font-mono text-xl md:text-2xl font-medium mb-4 flex items-center gap-2">
             <ListChecks className="h-5 w-5 text-primary" />
             Issues
           </h2>
@@ -93,9 +93,9 @@ const MeetingPage = () => {
             {meeting.issues?.map((issue) => (
               <Card
                 key={issue.id}
-                className="group relative flex flex-col overflow-hidden bg-card hover:shadow-lg border-0"
+                className="group relative flex flex-col overflow-hidden border border-border bg-card transition-colors hover:border-primary/30"
               >
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary/40 via-primary to-primary/40 opacity-70" />
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-primary" />
                 <CardHeader className="pb-3">
                   <div className="flex items-start gap-3">
                     <div className="rounded-lg p-2 bg-primary/10 text-primary ring-1 ring-primary/20">

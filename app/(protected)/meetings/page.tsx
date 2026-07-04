@@ -6,7 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import MeetingCard from "./meeting-card";
 import { FileAudio, Loader2, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -21,7 +21,7 @@ import {
 
 // Skeleton component for a single meeting item
 const MeetingSkeleton = () => (
-  <div className="flex items-start gap-3 bg-card text-card-foreground rounded-lg p-3 shadow border border-border w-full animate-pulse">
+  <div className="flex items-start gap-3 bg-card text-card-foreground rounded-lg p-3 border border-border w-full animate-pulse">
     <div className="rounded-full bg-muted p-2 mt-1">
       <FileAudio className="text-muted-foreground" size={20} />
     </div>
@@ -105,15 +105,15 @@ const MeetingPage = () => {
         <MeetingCard onUploadComplete={handleUploadComplete} />
       </div>
       <div className="h-8"></div>
-      <h1 className="text-xl font-semibold mb-4">Meetings</h1>
+      <h1 className="font-mono text-[11px] text-primary mb-3">{"// meetings"}</h1>
       <div className="flex flex-col gap-4">
         {status === "pending" ? (
           <SkeletonLoader />
         ) : status === "error" ? (
-          <div className="text-red-500">Error loading meetings</div>
+          <div className="font-mono text-xs text-destructive">error loading meetings</div>
         ) : meetings && meetings.length > 0 ? (
           meetings.map((meeting) => (
-            <div key={meeting.id} className="flex items-center gap-3 bg-card text-card-foreground rounded-lg p-3 shadow border border-border w-full hover:bg-accent transition-colors">
+            <div key={meeting.id} className="flex items-center gap-3 bg-card text-card-foreground rounded-lg p-3 border border-border w-full hover:bg-accent transition-colors">
               <Link
                 href={`/meetings/${meeting.id}`}
                 className="flex-grow text-left flex items-start gap-3 rounded-lg"
@@ -128,7 +128,7 @@ const MeetingPage = () => {
                         {meeting.name}
                       </p>
                       {meeting.status === "PROCESSING" && (
-                        <span className="inline-flex items-center gap-1 text-[10px] md:text-xs px-1.5 py-0.5 rounded-lg border bg-yellow-600/70">
+                        <span className="inline-flex items-center gap-1 text-[10px] md:text-xs px-1.5 py-0.5 rounded-md border border-primary/20 bg-primary/10 text-primary">
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Processing
                         </span>

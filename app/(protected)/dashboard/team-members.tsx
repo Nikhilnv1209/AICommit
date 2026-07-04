@@ -33,7 +33,7 @@ const TeamMembers = () => {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="h-8 w-8 rounded-full ring-2 ring-white bg-muted animate-pulse"
+            className="h-8 w-8 rounded-full ring-2 ring-card bg-muted animate-pulse"
           />
         ))}
       </div>
@@ -61,7 +61,7 @@ const TeamMembers = () => {
             return (
               <Tooltip key={user.id}>
                 <TooltipTrigger asChild>
-                  <div className="relative inline-flex h-8 w-8 rounded-full ring-2 ring-white overflow-hidden bg-gray-200">
+                  <div className="relative inline-flex h-8 w-8 rounded-full ring-2 ring-card overflow-hidden bg-muted">
                     {hasImage ? (
                       <Image
                         src={user.imageUrl!}
@@ -71,7 +71,7 @@ const TeamMembers = () => {
                         className="object-cover"
                       />
                     ) : (
-                      <span className="flex h-full w-full items-center justify-center text-xs font-medium text-gray-600">
+                      <span className="flex h-full w-full items-center justify-center text-xs font-medium text-muted-foreground">
                         {getInitials(user.firstName, user.lastName)}
                       </span>
                     )}
@@ -86,7 +86,7 @@ const TeamMembers = () => {
           })}
 
           {extra > 0 && (
-            <div className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-xs font-medium text-gray-700 ring-2 ring-white">
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground ring-2 ring-card">
               +{extra}
             </div>
           )}

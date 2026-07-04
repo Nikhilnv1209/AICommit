@@ -3,25 +3,16 @@
 import MDEditor from "@uiw/react-md-editor";
 import { askQuestion, saveQuestion } from "@/app/actions";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import useProject from "@/hooks/use-project";
 import { readStreamableValue } from "@ai-sdk/rsc";
-
-// Development-only logging for frontend
-const devConsole = {
-  log: (...args: any[]) => process.env.NODE_ENV === 'development' && console.log(...args),
-  error: (...args: any[]) => process.env.NODE_ENV === 'development' && console.error(...args),
-  warn: (...args: any[]) => process.env.NODE_ENV === 'development' && console.warn(...args),
-};
-import Image from "next/image";
+import { Loader2, Send } from "lucide-react";
 import { FormEvent, KeyboardEvent, useState } from "react";
 import "@/app/markdown-container.css";
 import CodeReferences from "./code-references";
 import { toast } from "sonner";
 import { getQueryClient } from "@/lib/react-query";
-import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
 
 const AskQuestionsCard = () => {
@@ -46,11 +37,9 @@ const AskQuestionsCard = () => {
       const { output, fileReference } = await askQuestion(question, project.id);
       setFileReference(fileReference);
 
-      // Start reading the stream
       for await (const delta of readStreamableValue(output)) {
         if (delta) {
           setAnswer((prev) => (prev ? prev + delta : delta));
-          // Open dialog only when we start receiving content
           if (!open && delta) {
             setOpen(true);
           }
@@ -62,12 +51,9 @@ const AskQuestionsCard = () => {
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Submit on Enter (without Ctrl/Meta)
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
-      // Only submit if there's text and not loading
       if (question.trim() && !loading) {
-        // Create a synthetic form submit event
         const form = e.currentTarget.closest('form');
         if (form) {
           const submitEvent = new Event('submit', { cancelable: true, bubbles: true });
@@ -75,7 +61,6 @@ const AskQuestionsCard = () => {
         }
       }
     }
-    // For Ctrl+Enter, we manually insert a newline
     if ((e.key === 'Enter' && e.ctrlKey) || (e.key === 'Enter' && e.metaKey)) {
       e.preventDefault();
       const textarea = e.currentTarget;
@@ -85,8 +70,7 @@ const AskQuestionsCard = () => {
       const before = text.substring(0, start);
       const after = text.substring(end);
       setQuestion(before + '\n' + after);
-      
-      // Set cursor position after the inserted newline
+
       setTimeout(() => {
         textarea.selectionStart = textarea.selectionEnd = start + 1;
       }, 0);
@@ -104,47 +88,27 @@ const AskQuestionsCard = () => {
       {
         loading: "Saving...",
         success: () => "Saved successfully!",
-        error: (err) => {
-          devConsole.error(err);
-          return "Something went wrong.";
-        },
+        error: () => "Something went wrong.",
       }
     );
-    
-    getQueryClient().invalidateQueries({queryKey: ["questions"]})
-  }
+
+    getQueryClient().invalidateQueries({ queryKey: ["questions"] });
+  };
 
   return (
     <>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[70vw] max-h-[90vh] flex flex-col overflow-hidden">
-          <DialogHeader className="flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <DialogTitle>
-                <Image 
-                  src="/logo-dark.png" 
-                  alt="logo" 
-                  width={40} 
-                  height={40} 
-                  className="dark:hidden block" 
-                />
-                <Image 
-                  src="/logo-light.png" 
-                  alt="logo" 
-                  width={40} 
-                  height={40} 
-                  className="hidden dark:block" 
-                />
-              </DialogTitle>
-              <Button variant={"outline"} onClick={handleQuestionSave}>
-                Save Answer
-              </Button>
-            </div>
+        <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-[70vw]">
+          <DialogHeader className="flex flex-shrink-0 flex-row items-center justify-between space-y-0 border-b border-border px-5 py-3">
+            <DialogTitle className="font-mono text-xs text-muted-foreground">{"// aicommit response"}</DialogTitle>
+            <Button variant="outline" size="sm" onClick={handleQuestionSave}>
+              Save
+            </Button>
           </DialogHeader>
-          <div className="flex-grow overflow-y-auto overflow-x-hidden">
-            <div 
+          <div className="flex-grow overflow-y-auto overflow-x-hidden p-5">
+            <div
               data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}
-              className="prose prose-sm sm:prose-base max-w-none py-4 px-2"
+              className="prose prose-sm sm:prose-base max-w-none px-2 py-2"
             >
               <MDEditor.Markdown
                 source={answer}
@@ -155,60 +119,55 @@ const AskQuestionsCard = () => {
               </div>
             </div>
           </div>
-          <div className="flex-shrink-0 mt-4">
-            <Button type="button" onClick={() => setOpen(false)} className="w-full sm:w-auto">Close</Button>
+          <div className="flex flex-shrink-0 border-t border-border px-5 py-3">
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              Close
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
-      <Card className="relative w-full">
-        <CardHeader>
-          <CardTitle className="font-bold text-lg">Ask a Question</CardTitle>
-        </CardHeader>
-        <CardContent>
+
+      <div className="relative w-full overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <span className="font-mono text-[11px] text-primary">{"// ask the codebase"}</span>
+          <span className="font-mono text-[10px] text-muted-foreground">⏎ to send</span>
+        </div>
+        <div className="p-5">
           <form onSubmit={handleSubmit}>
-            <Textarea
-              placeholder="Which file should I edit to change the home page"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="h-32 w-full"
-            />
-            <div className="mt-1 text-xs text-muted-foreground">
-              Press Enter to submit · Ctrl+Enter for new line
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-3.5 font-mono text-sm text-primary">›</span>
+              <Textarea
+                placeholder="which file handles authentication?"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="h-32 w-full resize-none border-border bg-background pl-8 font-mono text-sm placeholder:text-muted-foreground/50 focus-visible:ring-primary/30"
+              />
             </div>
-            <div className="h-4"></div>
-            <Button type="submit" disabled={loading} className="w-full sm:w-auto">
-              {loading ? (
-                <div className="flex items-center gap-2">
-                  <svg
-                    className="animate-spin h-4 w-4 text-white"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  <span>Ask AICommit</span>
-                </div>
-              ) : (
-                "Ask AICommit"
-              )}
-            </Button>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="font-mono text-[11px] text-muted-foreground">
+                enter to submit · ctrl+enter for newline
+              </p>
+              <Button
+                type="submit"
+                disabled={loading}
+                size="sm"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" /> thinking…
+                  </>
+                ) : (
+                  <>
+                    <Send className="size-3.5" /> ask
+                  </>
+                )}
+              </Button>
+            </div>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </>
   );
 };

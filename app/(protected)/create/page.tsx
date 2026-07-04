@@ -8,7 +8,7 @@ import { submitCreateForm, checkRepoCredits } from "@/app/actions";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import useProject from "@/hooks/use-project";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 
@@ -94,11 +94,11 @@ const CreatePage = () => {
       <img src="/create_page.svg" className="h-40 w-auto md:h-56" />
       <div className="w-full max-w-md">
         <div>
-          <h1 className="font-semibold text-2xl text-center">
+          <h1 className="font-mono text-2xl font-medium tracking-tight text-center">
             Link your Github Repository
           </h1>
-          <p className="text-sm text-muted-foreground text-center">
-            Connect your Github repository for start using AICommit
+          <p className="text-sm text-muted-foreground text-center font-mono">
+            Connect your Github repository to start using AICommit
           </p>
         </div>
         <div className="h-4"></div>
@@ -109,7 +109,7 @@ const CreatePage = () => {
               {...register("projectName", { required: true })}
               placeholder="Project Name"
               />
-              {errors.projectName && <p className="text-red-400 text-xs my-1 ml-1">{errors.projectName.message}</p>}
+              {errors.projectName && <p className="text-destructive text-xs my-1 ml-1">{errors.projectName.message}</p>}
             </div>
             <div>
               <Input
@@ -117,29 +117,29 @@ const CreatePage = () => {
                 placeholder="Github URL"
                 type="url"
               />
-              {errors.repoUrl && <p className="text-red-400 text-xs my-1 ml-1">{errors.repoUrl.message}</p>}
+              {errors.repoUrl && <p className="text-destructive text-xs my-1 ml-1">{errors.repoUrl.message}</p>}
             </div>
             <div>
             <Input
               {...register("githubToken")}
               placeholder="Github Token(Optional)"
             />
-            {errors.githubToken && <p className="text-red-400 text-xs my-1 ml-1">{errors.githubToken.message}</p>}
+            {errors.githubToken && <p className="text-destructive text-xs my-1 ml-1">{errors.githubToken.message}</p>}
             </div>
             {(!checkingCredits && (creditError || fileCount !== null)) && (
-              <div className="text-sm p-3 rounded-md border mb-2 flex flex-col gap-1">
+              <div className="rounded-md border border-border bg-card p-3 mb-2 flex flex-col gap-1 font-mono text-xs">
                 {creditError && (
-                  <div className="text-red-500">{creditError}</div>
+                  <div className="text-destructive">{creditError}</div>
                 )}
                 {!creditError && fileCount != null && userCredits != null && (
                   <div className="flex flex-col gap-0.5">
                     <span>Files to index: <span className="font-medium">{fileCount}</span> (credits required)</span>
                     <span>Your credits: <span className="font-medium">{userCredits}</span></span>
                     {sufficient === false && (
-                      <span className="text-red-500">Not enough credits to create this project.</span>
+                      <span className="text-destructive">Not enough credits to create this project.</span>
                     )}
                     {sufficient === true && (
-                      <span className="text-green-600">You have sufficient credits.</span>
+                      <span className="text-primary">You have sufficient credits.</span>
                     )}
                   </div>
                 )}

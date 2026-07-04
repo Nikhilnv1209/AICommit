@@ -237,32 +237,32 @@ const IndexingProgress = () => {
     // Get current item from display state
     const currentItemDisplay = displayCurrentItem || pendingCurrentItemRef.current;
 
-    // Stage-specific styling - using app's primary violet color
+    // Stage-specific styling — neutral canvas with lime accent
     const stageStyles: Record<string, { gradient: string; glow: string }> = {
       FETCHING: {
-        gradient: 'from-violet-950/90 via-indigo-900/80 to-slate-950/90',
-        glow: 'shadow-violet-500/20',
+        gradient: 'from-zinc-900 via-zinc-900/95 to-zinc-950',
+        glow: 'shadow-primary/20',
       },
       PROCESSING: {
-        gradient: 'from-violet-950/90 via-purple-900/80 to-fuchsia-950/90',
-        glow: 'shadow-violet-500/20',
+        gradient: 'from-zinc-900 via-zinc-900/95 to-zinc-950',
+        glow: 'shadow-primary/20',
       },
       COMMIT_DIFFS: {
-        gradient: 'from-violet-950/90 via-indigo-900/80 to-purple-950/90',
-        glow: 'shadow-violet-500/20',
+        gradient: 'from-zinc-900 via-zinc-900/95 to-zinc-950',
+        glow: 'shadow-primary/20',
       }
     };
 
     const currentStageStyle = effectiveStage ? stageStyles[effectiveStage] : stageStyles.FETCHING;
 
     return (
-      <div className={`my-3 relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br ${currentStageStyle.gradient} ${currentStageStyle.glow} shadow-2xl min-h-[160px]`}>
+      <div className={`my-3 relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-zinc-900 via-zinc-900/95 to-zinc-950 ${currentStageStyle.glow} shadow-2xl min-h-[160px]`}>
         {/* Animated background particles */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-4 left-1/4 w-1.5 h-1.5 bg-violet-400/30 rounded-full animate-pulse" style={{ animationDuration: '3s' }} />
-          <div className="absolute top-8 right-1/3 w-1 h-1 bg-violet-300/20 rounded-full animate-pulse" style={{ animationDuration: '3.5s', animationDelay: '1s' }} />
-          <div className="absolute bottom-16 left-1/3 w-1 h-1 bg-purple-300/20 rounded-full animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
-          <div className="absolute top-1/3 right-12 w-1.5 h-1.5 bg-violet-300/20 rounded-full animate-pulse" style={{ animationDuration: '4s', animationDelay: '1.5s' }} />
+          <div className="absolute top-4 left-1/4 w-1.5 h-1.5 bg-primary/30 rounded-full animate-pulse" style={{ animationDuration: '3s' }} />
+          <div className="absolute top-8 right-1/3 w-1 h-1 bg-white/10 rounded-full animate-pulse" style={{ animationDuration: '3.5s', animationDelay: '1s' }} />
+          <div className="absolute bottom-16 left-1/3 w-1 h-1 bg-white/10 rounded-full animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
+          <div className="absolute top-1/3 right-12 w-1.5 h-1.5 bg-primary/20 rounded-full animate-pulse" style={{ animationDuration: '4s', animationDelay: '1.5s' }} />
         </div>
 
         <div className="relative p-4 flex flex-col h-full">
@@ -279,7 +279,7 @@ const IndexingProgress = () => {
                 {isConnecting ? 'Connecting...' : stageLabel}
               </h3>
               {!isConnecting && (
-                <p className="text-xs text-violet-200/60">
+                <p className="text-xs text-white/40">
                   {Math.min(effectiveProcessed, effectiveTotal)} / {effectiveTotal} files
                 </p>
               )}
@@ -288,7 +288,7 @@ const IndexingProgress = () => {
             {/* File box - inline horizontally */}
             <div className="w-[45%] px-3 py-2 bg-black/20 rounded-lg border border-primary/20 h-10 flex items-center flex-shrink-0">
               {currentItemDisplay && effectiveStage !== 'FETCHING' ? (
-                <div className="flex items-center gap-2 text-sm text-violet-100/80 w-full">
+                <div className="flex items-center gap-2 text-sm text-white/70 w-full">
                   {effectiveStage === 'COMMIT_DIFFS' ? (
                     <GitCommit className="w-4 h-4 text-primary flex-shrink-0" />
                   ) : (
@@ -297,7 +297,7 @@ const IndexingProgress = () => {
                   <span className="truncate font-mono text-xs">{currentItemDisplay}</span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-sm text-violet-200/40 w-full">
+                <div className="flex items-center gap-2 text-sm text-white/30 w-full">
                   <FileCode className="w-4 h-4 flex-shrink-0" />
                   <span className="text-xs italic">Preparing...</span>
                 </div>
@@ -309,7 +309,7 @@ const IndexingProgress = () => {
               <div className="text-right flex-shrink-0 w-16">
                 <span className="text-2xl font-bold text-white tabular-nums">
                   {pct}
-                  <span className="text-sm text-violet-200/60">%</span>
+                  <span className="text-sm text-white/40">%</span>
                 </span>
               </div>
             )}
@@ -346,7 +346,7 @@ const IndexingProgress = () => {
                       {isDone ? '✓' : i + 1}
                     </div>
                     <span className={`text-[10px] uppercase tracking-wider transition-colors duration-500 truncate ${
-                      isActive ? 'text-white font-medium' : isDone ? 'text-violet-200/70' : 'text-white/40'
+                      isActive ? 'text-white font-medium' : isDone ? 'text-white/50' : 'text-white/40'
                     }`}>
                       {s.replace('_', ' ')}
                     </span>
@@ -383,8 +383,8 @@ const IndexingProgress = () => {
           <div className="flex items-center gap-2 text-sm">
             {currentStatus === 'ERROR' && (
               <>
-                <XCircle className="h-4 w-4 text-red-500" />
-                <span className="text-red-600">Indexing failed</span>
+                <XCircle className="h-4 w-4 text-destructive" />
+                <span className="text-destructive">Indexing failed</span>
               </>
             )}
             {currentStatus === 'TIMEOUT' && (
@@ -420,7 +420,7 @@ const IndexingProgress = () => {
               <p className="text-xs font-medium text-orange-600">{status.errorSummary}</p>
             )}
             {message && (
-              <p className="text-xs text-red-500">{message}</p>
+              <p className="text-xs text-destructive">{message}</p>
             )}
           </div>
         )}
@@ -431,16 +431,16 @@ const IndexingProgress = () => {
   // Show completion feedback for a few seconds after indexing completes
   if (currentStatus === 'COMPLETED' && showCompletionFeedback) {
     return (
-      <div className="my-3 relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-violet-950/90 via-indigo-900/80 to-purple-950/90 shadow-2xl min-h-[160px]">
+      <div className="my-3 relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-zinc-900 via-zinc-900/95 to-zinc-950 shadow-2xl min-h-[160px]">
         {/* Animated background particles - slow pulse */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-4 left-1/4 w-2 h-2 bg-violet-400/30 rounded-full animate-pulse" style={{ animationDuration: '3s' }} />
-          <div className="absolute top-8 right-1/3 w-1.5 h-1.5 bg-purple-300/20 rounded-full animate-pulse" style={{ animationDuration: '3.5s', animationDelay: '0.5s' }} />
-          <div className="absolute bottom-16 left-1/3 w-1 h-1 bg-indigo-300/20 rounded-full animate-pulse" style={{ animationDuration: '3s', animationDelay: '1s' }} />
-          <div className="absolute top-1/3 right-12 w-2 h-2 bg-violet-300/20 rounded-full animate-pulse" style={{ animationDuration: '4s', animationDelay: '1.5s' }} />
+          <div className="absolute top-4 left-1/4 w-2 h-2 bg-primary/30 rounded-full animate-pulse" style={{ animationDuration: '3s' }} />
+          <div className="absolute top-8 right-1/3 w-1.5 h-1.5 bg-white/10 rounded-full animate-pulse" style={{ animationDuration: '3.5s', animationDelay: '0.5s' }} />
+          <div className="absolute bottom-16 left-1/3 w-1 h-1 bg-white/10 rounded-full animate-pulse" style={{ animationDuration: '3s', animationDelay: '1s' }} />
+          <div className="absolute top-1/3 right-12 w-2 h-2 bg-primary/20 rounded-full animate-pulse" style={{ animationDuration: '4s', animationDelay: '1.5s' }} />
           
           {/* Floating sparkles */}
-          <Sparkles className="absolute top-3 right-12 w-4 h-4 text-violet-300/40 animate-pulse" style={{ animationDuration: '3s' }} />
+          <Sparkles className="absolute top-3 right-12 w-4 h-4 text-primary/40 animate-pulse" style={{ animationDuration: '3s' }} />
           <Zap className="absolute bottom-4 left-12 w-3 h-3 text-yellow-300/30 animate-pulse" style={{ animationDelay: '2s' }} />
         </div>
 
@@ -455,18 +455,18 @@ const IndexingProgress = () => {
             {/* Title */}
             <div className="min-w-0 flex-1">
               <h3 className="text-base font-semibold text-white tracking-tight">
-                <span className="bg-gradient-to-r from-violet-300 via-purple-200 to-indigo-300 bg-clip-text text-transparent">
+                <span className="text-primary">
                   Repository Indexed!
                 </span>
               </h3>
-              <p className="text-xs text-violet-200/60">
+              <p className="text-xs text-white/40">
                 All stages completed
               </p>
             </div>
 
             {/* Summary box - inline */}
             <div className="w-[45%] px-3 py-2 bg-black/20 rounded-lg border border-primary/20 h-10 flex items-center flex-shrink-0">
-              <p className="text-sm text-violet-100/80 truncate w-full">
+              <p className="text-sm text-white/70 truncate w-full">
                 {completionSummary}
               </p>
             </div>
@@ -474,7 +474,7 @@ const IndexingProgress = () => {
             {/* Dismiss button */}
             <button
               onClick={() => setShowCompletionFeedback(false)}
-              className="flex-shrink-0 p-1.5 rounded-full text-violet-200/60 hover:text-white hover:bg-white/10 transition-all duration-200"
+              className="flex-shrink-0 p-1.5 rounded-full text-white/40 hover:text-white hover:bg-white/10 transition-all duration-200"
               title="Dismiss"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -496,7 +496,7 @@ const IndexingProgress = () => {
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-primary text-white flex-shrink-0">
                     ✓
                   </div>
-                  <span className="text-[10px] uppercase tracking-wider text-violet-200/70 truncate">
+                  <span className="text-[10px] uppercase tracking-wider text-white/50 truncate">
                     {s.replace('_', ' ')}
                   </span>
                 </div>
