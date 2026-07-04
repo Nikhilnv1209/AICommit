@@ -145,8 +145,8 @@ export async function reindexProject(projectId: string) {
     });
     if (!project) throw new Error("Project not found or access denied");
 
-    // Delete existing embeddings first
-    await prisma.sourceCodeEmbedding.deleteMany({ where: { projectId } });
+    // Don't delete existing embeddings — the indexer diffs per-file
+    // using contentHash and only re-processes changed/new files.
     
     // Reset indexing status
     await indexingManager.resetIndexing(projectId);

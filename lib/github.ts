@@ -31,13 +31,14 @@ export const getRepoCommits = async (githubUrl: string) => {
     const { data } = await octokit.rest.repos.listCommits({
       owner: owner,
       repo: repo,
+      per_page: 100,
     })
 
     const sortCommits = data.sort((a: any, b: any) => {
       return new Date(b.commit.author.date).getTime() - new Date(a.commit.author.date).getTime()
     }) as any[]
 
-    return sortCommits.slice(0, 10).map((commit) => ({
+    return sortCommits.map((commit) => ({
       commitHash: commit.sha as string,
       commitAuthorName: commit.commit?.author?.name ?? "",
       commitAuthorAvatar: commit.author?.avatar_url ?? "",
@@ -74,11 +75,12 @@ export const pollCommits = async (
 
     logInfo('PollCommits', `Processing ${unProcessedCommits.length} new commits`, true)
 
-    const processedCommits: ProcessedCommit[] = []
     let successCount = 0
     let failedCount = 0
 
-    // Process commits one by one to report per-commit progress
+    // Process commits one by one, saving each to DB immediately so that
+    // if the server restarts, already-processed commits are skipped by
+    // filterUnprocessedCommits and we resume from where we left off.
     for (let i = 0; i < unProcessedCommits.length; i++) {
       const commit = unProcessedCommits[i]
       
@@ -93,14 +95,26 @@ export const pollCommits = async (
 
       try {
         const summary = await summerizeCommit(githubUrl, commit.commitHash)
-        processedCommits.push({
-          projectId,
-          commitHash: commit.commitHash,
-          commitAuthorName: commit.commitAuthorName,
-          commitAuthorAvatar: commit.commitAuthorAvatar,
-          commitMessage: commit.commitMessage,
-          commitDate: commit.commitDate,
-          summary
+        // Save immediately so progress survives server restarts
+        await prisma.commit.upsert({
+          where: { commitHash: commit.commitHash },
+          update: {
+            projectId,
+            commitAuthorName: commit.commitAuthorName,
+            commitAuthorAvatar: commit.commitAuthorAvatar,
+            commitMessage: commit.commitMessage,
+            commitDate: commit.commitDate,
+            summary
+          },
+          create: {
+            projectId,
+            commitHash: commit.commitHash,
+            commitAuthorName: commit.commitAuthorName,
+            commitAuthorAvatar: commit.commitAuthorAvatar,
+            commitMessage: commit.commitMessage,
+            commitDate: commit.commitDate,
+            summary
+          }
         })
         successCount++
       } catch (error) {
@@ -118,17 +132,8 @@ export const pollCommits = async (
       })
     }
 
-    if (processedCommits.length > 0) {
-      const commits = await prisma.commit.createMany({
-        data: processedCommits
-      })
-
-      logInfo('PollCommits', `Successfully added ${commits.count} commits to the database`, true)
-      return { count: commits.count, success: successCount, failed: failedCount }
-    } else {
-      logInfo('PollCommits', 'No commits were successfully processed', true)
-      return { count: 0, success: successCount, failed: failedCount }
-    }
+    logInfo('PollCommits', `Successfully processed ${successCount} commits, ${failedCount} failed`, true)
+    return { count: successCount, success: successCount, failed: failedCount }
   } catch (error: any) {
     const errorMessage = error && typeof error === 'object' && error.message 
       ? error.message 

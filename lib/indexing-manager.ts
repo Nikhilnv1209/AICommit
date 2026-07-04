@@ -160,14 +160,11 @@ export class IndexingManager {
   public async resumeInterruptedIndexing(): Promise<void> {
     logInfo('IndexingManager', 'Checking for interrupted indexing jobs...');
 
-    // Find all projects stuck in INDEXING state
+    // On server startup, ANY job still in INDEXING state is interrupted —
+    // the server process that was running it no longer exists.
     const stuckProjects = await prisma.projectIndexing.findMany({
       where: { 
         status: 'INDEXING',
-        OR: [
-          { serverId: SERVER_ID }, // Our own interrupted jobs
-          { lastHeartbeat: { lt: new Date(Date.now() - INDEXING_TIMEOUT_MS) } }, // Timed out jobs
-        ],
       },
       include: { project: true },
     });
@@ -186,18 +183,35 @@ export class IndexingManager {
 
       logInfo('IndexingManager', `Resuming indexing for project ${projectId}`);
 
-      // Update status to indicate we're taking over
+      // Directly set up the job — bypass startIndexing's guard since we know
+      // this job was interrupted by a server restart (the in-memory Map is empty
+      // on a fresh start, so there's no risk of double-running).
+      const abortController = new AbortController();
+      activeIndexingJobs.set(projectId, {
+        projectId,
+        githubUrl,
+        githubToken,
+        startTime: new Date(),
+        abortController,
+      });
+
+      // Update DB to mark as ours
       await prisma.projectIndexing.update({
         where: { projectId },
         data: {
           serverId: SERVER_ID,
           lastHeartbeat: new Date(),
-          error: 'Resumed after interruption',
+          startedAt: new Date(),
+          completedAt: null,
+          error: null,
         },
       });
 
-      // Start fresh indexing
-      await this.startIndexing(projectId, githubUrl, githubToken);
+      // Start indexing in background
+      this.runIndexing(projectId, githubUrl, githubToken, abortController).catch((error) => {
+        logError('IndexingManager', `Unexpected error during resumed indexing for ${projectId}:`, error);
+        this.markAsError(projectId, error?.message || 'Unknown error');
+      });
     }
   }
 
@@ -267,7 +281,7 @@ export class IndexingManager {
   /**
    * Mark indexing as completed
    */
-  public async markAsCompleted(projectId: string, totalProcessed: number, summary?: string): Promise<void> {
+  public async markAsCompleted(projectId: string, totalProcessed: number, summary?: string, lastCommitSha?: string): Promise<void> {
     activeIndexingJobs.delete(projectId);
 
     await prisma.projectIndexing.update({
@@ -280,6 +294,7 @@ export class IndexingManager {
         errorSummary: summary || null,
         completedAt: new Date(),
         lastHeartbeat: new Date(),
+        ...(lastCommitSha ? { lastCommitSha } : {}),
       },
     });
 
@@ -396,6 +411,13 @@ export class IndexingManager {
         return;
       }
 
+      // Fetch current HEAD SHA for cache tracking
+      let currentSha: string | undefined;
+      try {
+        const rateLimiter = (await import('@/lib/github-loader')).getGithubRateLimiter();
+        currentSha = await rateLimiter.getHeadCommitSha(githubUrl, githubToken || process.env.GITHUB_TOKEN);
+      } catch { /* best-effort */ }
+
       // Check for unprocessed commits and process them if any
       const unprocessedCount = await this.getUnprocessedCommitCount(projectId, githubUrl);
       
@@ -421,7 +443,7 @@ export class IndexingManager {
       }
 
       // Mark as completed with commit summary
-      await this.markAsCompleted(projectId, result.success, commitSummary);
+      await this.markAsCompleted(projectId, result.success, commitSummary, currentSha);
 
     } catch (error: any) {
       if (abortController.signal.aborted) {

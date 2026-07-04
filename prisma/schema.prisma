@@ -68,10 +68,11 @@ model ProjectIndexing {
   lastHeartbeat DateTime?  // Last time indexing made progress
   serverId      String?    // Unique ID of server instance doing the indexing
   
-  startedAt     DateTime?
-  completedAt   DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+   startedAt     DateTime?
+   completedAt   DateTime?
+   lastCommitSha String?
+   createdAt     DateTime @default(now())
+   updatedAt     DateTime @updatedAt
 }
 
 model UserToProject {
@@ -111,6 +112,7 @@ model SourceCodeEmbedding {
   sourceCode        String
   fileName          String
   summary           String
+  contentHash       String?
 
   projectId String
   project   Project @relation(fields: [projectId], references: [id])

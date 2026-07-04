@@ -156,7 +156,7 @@ class GithubRateLimiter {
     }
   }
 
-  private async fetchRawContent(url: string): Promise<string> {
+  public async fetchRawContent(url: string): Promise<string> {
     logDebug('GitHubRaw', `Fetching content: ${url}`);
     const response = await axios.get<string>(url, { responseType: 'text' });
     return response.data;
@@ -215,11 +215,61 @@ class GithubRateLimiter {
     logInfo('GitHubLoader', `Loaded ${docs.length} documents from repository: ${githubUrl}`);
     return docs;
   }
+
+  /**
+   * Get the HEAD commit SHA of the default branch (1 API call).
+   */
+  public async getHeadCommitSha(githubUrl: string, githubToken?: string): Promise<string> {
+    const [_, __, ___, owner, repo] = githubUrl.split('/');
+    const headers = githubToken ? { Authorization: `token ${githubToken}` } : {};
+    const repoRes = await this.githubApiFetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+    const defaultBranch = repoRes.data.default_branch || 'main';
+    const branchRes = await this.githubApiFetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches/${defaultBranch}`,
+      { headers }
+    );
+    return branchRes.data.commit.sha as string;
+  }
+
+  /**
+   * Get the full file tree (path → blob SHA) in a single API call.
+   * Returns a map of file path to blob SHA, excluding ignored files.
+   */
+  public async getRepoTree(
+    githubUrl: string,
+    githubToken?: string
+  ): Promise<{ sha: string; files: Map<string, string> }> {
+    const [_, __, ___, owner, repo] = githubUrl.split('/');
+    const headers = githubToken ? { Authorization: `token ${githubToken}` } : {};
+
+    const headSha = await this.getHeadCommitSha(githubUrl, githubToken);
+    const treeRes = await this.githubApiFetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/${headSha}?recursive=1`,
+      { headers }
+    );
+
+    const files = new Map<string, string>();
+    if (treeRes.data.tree) {
+      for (const item of treeRes.data.tree) {
+        if (
+          item.type === 'blob' &&
+          !IGNORE_FILES.some((f: string) => item.path.toLowerCase().endsWith(f))
+        ) {
+          files.set(item.path, item.sha);
+        }
+      }
+    }
+    return { sha: headSha, files };
+  }
+}
+
+export function getGithubRateLimiter(): GithubRateLimiter {
+  return GithubRateLimiter.getInstance();
 }
 
 /** Process embeddings in controlled batches to avoid connection limit issues */
 async function processEmbeddingsInBatches(
-  embeddings: Array<{ sourceCode: string; fileName: string; summary: string; embedding: any }>,
+  embeddings: Array<{ sourceCode: string; fileName: string; summary: string; embedding: any; contentHash: string }>,
   projectId: string,
   concurrency: number,
   onProgress?: (processed: number) => void
@@ -239,6 +289,7 @@ async function processEmbeddingsInBatches(
             sourceCode: embedding.sourceCode,
             fileName: embedding.fileName,
             summary: embedding.summary,
+            contentHash: embedding.contentHash,
             projectId,
           },
         });
@@ -278,69 +329,127 @@ async function processEmbeddingsInBatches(
   return { success: successCount, failed: failedCount };
 }
 
-/** Index a GitHub repository with IndexingManager integration */
+/** Index a GitHub repository with IndexingManager integration and per-file caching */
 export const indexGithubRepo = async (projectId: string, githubUrl: string, githubToken?: string) => {
   const rateLimiter = GithubRateLimiter.getInstance();
   try {
     logInfo('Indexing', `Starting indexing for project ${projectId}`);
-
-    // Stage 1: FETCHING - loading files from GitHub
-    await indexingManager.updateStage(projectId, 'FETCHING');
-    // Small delay to allow SSE to propagate the stage change to clients
-    await new Promise(resolve => setTimeout(resolve, 200));
     const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
 
-    // Determine total file count upfront so the FETCHING stage shows real progress
-    let fetchTotal = 0;
-    try {
-      fetchTotal = await countGithubRepoFiles(githubUrl, effectiveToken);
-    } catch {
-      // Count is best-effort; fetching continues without a total
-    }
-    await indexingManager.updateProgress(projectId, 0, fetchTotal, 'Fetching files...');
+    // ── Get the repo tree (single API call) ────────────────────────────
+    // Returns { sha, files: Map<path, blobSHA> }
+    const { files: treeFiles } = await rateLimiter.getRepoTree(githubUrl, effectiveToken);
 
-    const docs = await rateLimiter.loadGithubRepo(
-      githubUrl,
-      effectiveToken,
-      async (processed, fileName) => {
-        const total = fetchTotal > 0 ? fetchTotal : processed;
-        await indexingManager.updateProgress(projectId, processed, total, fileName);
+    // ── Determine which files need processing ──────────────────────────
+    // Files already in DB with a matching contentHash are skipped.
+    const existing = await prisma.sourceCodeEmbedding.findMany({
+      where: { projectId },
+      select: { fileName: true, contentHash: true },
+    });
+    const existingMap = new Map(existing.map(e => [e.fileName, e.contentHash]));
+
+    const toFetch: { path: string; sha: string }[] = [];
+    for (const [path, sha] of treeFiles) {
+      if (existingMap.get(path) !== sha) {
+        toFetch.push({ path, sha });
       }
-    );
-    logInfo('Indexing', `Loaded ${docs.length} documents for project ${projectId}`);
+    }
+    const deletedFiles = existing
+      .filter(e => !treeFiles.has(e.fileName))
+      .map(e => e.fileName);
 
-    // Stage 2: PROCESSING - generating summaries, embeddings, and saving to DB
+    const skipped = treeFiles.size - toFetch.length;
+    logInfo('Indexing', `Repo has ${treeFiles.size} files · ${toFetch.length} to fetch · ${skipped} cached · ${deletedFiles.length} deleted`);
+
+    // If nothing changed and no deletions, skip everything
+    if (toFetch.length === 0 && deletedFiles.length === 0) {
+      logInfo('Indexing', `No changes detected for project ${projectId}, skipping`);
+      return { success: skipped, failed: 0, skipped: true };
+    }
+
+    // ── Stage 1: FETCHING ──────────────────────────────────────────────
+    await indexingManager.updateStage(projectId, 'FETCHING');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await indexingManager.updateProgress(projectId, 0, toFetch.length, 'Fetching files...');
+
+    // Fetch only the files that changed (or are new/failed)
+    const [_, __, ___, owner, repo] = githubUrl.split('/');
+    const defaultBranchRes = await rateLimiter.apiGet(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      { headers: effectiveToken ? { Authorization: `token ${effectiveToken}` } : {} }
+    );
+    const defaultBranch = defaultBranchRes.data.default_branch || 'main';
+    const baseRawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}`;
+
+    const docs: Document[] = [];
+    let fetchedCount = 0;
+    for (const { path, sha } of toFetch) {
+      const rawUrl = `${baseRawUrl}/${path}`;
+      try {
+        const content = await rateLimiter.fetchRawContent(rawUrl);
+        docs.push({
+          pageContent: content,
+          metadata: { source: path, contentHash: sha },
+        });
+        fetchedCount++;
+        await indexingManager.updateProgress(projectId, fetchedCount, toFetch.length, path);
+      } catch (error: any) {
+        logWarning('GitHubLoader', `Skipping file ${path} due to fetch error: ${error.message}`);
+        fetchedCount++;
+        await indexingManager.updateProgress(projectId, fetchedCount, toFetch.length, path);
+      }
+    }
+    logInfo('Indexing', `Fetched ${docs.length} new/changed documents for project ${projectId}`);
+
+    // ── Stage 2: PROCESSING ────────────────────────────────────────────
     await indexingManager.updateStage(projectId, 'PROCESSING');
-    // Small delay to allow SSE to propagate the stage change to clients
     await new Promise(resolve => setTimeout(resolve, 200));
 
-    // Process documents with progress updates throughout the entire stage
-    const results = await batchProcessDocuments(
-      docs,
-      async (processed, fileName) => {
-        // Update progress as each file is processed (summary + embedding generated)
-        await indexingManager.updateProgress(projectId, processed, docs.length, fileName);
-        logDebug('Indexing', `Progress: ${processed}/${docs.length} - ${fileName}`);
+    if (docs.length > 0) {
+      const results = await batchProcessDocuments(
+        docs,
+        async (processed, fileName) => {
+          await indexingManager.updateProgress(projectId, processed, docs.length, fileName);
+        }
+      );
+
+      // Attach contentHash to each result and upsert (update if file existed, create if new)
+      const embeddingsWithHash = results.map(r => ({
+        ...r,
+        contentHash: (docs.find(d => d.metadata.source === r.fileName)?.metadata as any)?.contentHash || '',
+      }));
+
+      const { success, failed } = await processEmbeddingsInBatches(
+        embeddingsWithHash,
+        projectId,
+        MAX_DB_CONCURRENCY
+      );
+
+      await indexingManager.recordErrorSummary(projectId, success, failed);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Delete embeddings for files that no longer exist in the repo
+      if (deletedFiles.length > 0) {
+        await prisma.sourceCodeEmbedding.deleteMany({
+          where: { projectId, fileName: { in: deletedFiles } },
+        });
+        logInfo('Indexing', `Removed ${deletedFiles.length} deleted files from embeddings`);
       }
-    );
 
-    logInfo('Indexing', `Generated ${results.length} embeddings for project ${projectId}`);
-
-    // Save all embeddings to database
-    const { success, failed } = await processEmbeddingsInBatches(
-      results,
-      projectId,
-      MAX_DB_CONCURRENCY
-    );
-
-    // Record summary for error display
-    await indexingManager.recordErrorSummary(projectId, success, failed);
-
-    // Small delay to let final progress (100%) propagate to UI before stage changes
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    logInfo('IndexingComplete', `Repo indexing completed. Success: ${success}, Failed: ${failed}`, true);
-    return { success, failed };
+      const totalProcessed = skipped + success;
+      logInfo('IndexingComplete', `Indexing completed. Cached: ${skipped}, New/updated: ${success}, Failed: ${failed}, Deleted: ${deletedFiles.length}`, true);
+      return { success: totalProcessed, failed, skipped: false };
+    } else {
+      // Only deletions, no new files to process
+      if (deletedFiles.length > 0) {
+        await prisma.sourceCodeEmbedding.deleteMany({
+          where: { projectId, fileName: { in: deletedFiles } },
+        });
+        logInfo('Indexing', `Removed ${deletedFiles.length} deleted files from embeddings`);
+      }
+      logInfo('IndexingComplete', `No new files to process. Deleted: ${deletedFiles.length}`, true);
+      return { success: skipped, failed: 0, skipped: false };
+    }
   } catch (error: any) {
     logError('IndexingError', 'Error indexing GitHub repository:', {
       projectId,
