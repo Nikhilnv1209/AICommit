@@ -227,12 +227,10 @@ const IndexingProgress = () => {
     const stages = ['FETCHING', 'PROCESSING', 'COMMIT_DIFFS'];
     const currentStageIndex = effectiveStage ? stages.indexOf(effectiveStage) : -1;
 
-    // Show file count during PROCESSING and COMMIT_DIFFS stages when we have data
+    // File count + current item are shown across all stages when we have progress data.
     // Also check pendingProgressRef as fallback since that's what's used for displayProgress
-    const hasProgressData = total > 0 || pendingProgressRef.current.total > 0;
     const effectiveTotal = total > 0 ? total : pendingProgressRef.current.total;
     const effectiveProcessed = total > 0 ? processed : pendingProgressRef.current.processed;
-    const showFileCount = (effectiveStage === 'PROCESSING' || effectiveStage === 'COMMIT_DIFFS') && hasProgressData;
 
     // Get current item from display state
     const currentItemDisplay = displayCurrentItem || pendingCurrentItemRef.current;
@@ -287,7 +285,7 @@ const IndexingProgress = () => {
 
             {/* File box - inline horizontally */}
             <div className="w-[45%] px-3 py-2 bg-black/20 rounded-lg border border-primary/20 h-10 flex items-center flex-shrink-0">
-              {currentItemDisplay && effectiveStage !== 'FETCHING' ? (
+              {currentItemDisplay ? (
                 <div className="flex items-center gap-2 text-sm text-white/70 w-full">
                   {effectiveStage === 'COMMIT_DIFFS' ? (
                     <GitCommit className="w-4 h-4 text-primary flex-shrink-0" />

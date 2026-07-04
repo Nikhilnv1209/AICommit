@@ -3,7 +3,7 @@ import { batchProcessDocuments } from './ai';
 import { prisma } from '@/prisma/client';
 import { indexingManager } from '@/lib/indexing-manager';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
-import { devLog, devError, devWarn, logError, logInfo, logDebug, logWarning } from './logger';
+import { devError, logError, logInfo, logDebug, logWarning } from './logger';
 
 // Shared ignore list for non-source/binary files
 const IGNORE_FILES: string[] = [
@@ -28,11 +28,8 @@ const IGNORE_FILES: string[] = [
   '.pak',
 ];
 
-// GitHub API rate limits
-const GITHUB_API_RATE_LIMIT = {
-  maxRequestsPerHour: 5000, // Now using authenticated limits with fallback token
-  cooldownMs: 60 * 60 * 1000, // 1 hour in milliseconds
-};
+// Fallback rate limit used only until the first response reveals GitHub's real quota.
+const GITHUB_RATE_LIMIT_FALLBACK = 5000;
 
 // Maximum concurrent database operations
 const MAX_DB_CONCURRENCY = 5; // Adjust based on your DB connection limit
@@ -41,16 +38,13 @@ class GithubRateLimiter {
   private static instance: GithubRateLimiter | null = null;
   private queue: Array<() => Promise<any>> = [];
   private processing: boolean = false;
-  private apiRequestCount: number = 0;
-  private lastResetTime: number = Date.now();
 
-  private constructor() {
-    setInterval(() => {
-      this.apiRequestCount = 0;
-      this.lastResetTime = Date.now();
-      devLog('API rate limit reset via interval');
-    }, GITHUB_API_RATE_LIMIT.cooldownMs);
-  }
+  // Real rate-limit state, updated from GitHub response headers on every request.
+  private rateLimitLimit: number = GITHUB_RATE_LIMIT_FALLBACK;
+  private rateLimitRemaining: number = GITHUB_RATE_LIMIT_FALLBACK;
+  private rateLimitReset: number = 0; // epoch ms when the window resets
+
+  private constructor() {}
 
   public static getInstance(): GithubRateLimiter {
     if (!GithubRateLimiter.instance) {
@@ -100,36 +94,61 @@ class GithubRateLimiter {
     return this.getDefaultBranch(githubUrl, githubToken);
   }
 
+  /**
+   * Proactively wait if the real GitHub quota is exhausted, using headers
+   * received from prior responses. Falls back to the hardcoded limit only
+   * before the first response has been seen.
+   */
   private async enforceRateLimit(): Promise<void> {
     const now = Date.now();
-    if (now - this.lastResetTime >= GITHUB_API_RATE_LIMIT.cooldownMs) {
-      this.apiRequestCount = 0;
-      this.lastResetTime = now;
-      devLog('API rate limit reset due to time elapsed');
+
+    // If the reset window has passed, assume the quota has refreshed.
+    if (this.rateLimitReset > 0 && now >= this.rateLimitReset) {
+      this.rateLimitRemaining = this.rateLimitLimit;
     }
 
-    if (this.apiRequestCount >= GITHUB_API_RATE_LIMIT.maxRequestsPerHour) {
-      const waitTime = GITHUB_API_RATE_LIMIT.cooldownMs - (now - this.lastResetTime);
-      devLog(`API rate limit reached (${this.apiRequestCount}/${GITHUB_API_RATE_LIMIT.maxRequestsPerHour}). Waiting ${waitTime}ms until reset.`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-      this.apiRequestCount = 0;
-      this.lastResetTime = Date.now();
+    if (this.rateLimitRemaining <= 0) {
+      const waitMs = this.rateLimitReset > 0
+        ? Math.max(this.rateLimitReset - now, 0) + 1000
+        : 60 * 1000; // fallback wait if reset time unknown
+      logWarning('GitHubAPI', true, `Rate limit reached (0/${this.rateLimitLimit} remaining). Waiting ${Math.round(waitMs / 1000)}s until reset.`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      this.rateLimitRemaining = this.rateLimitLimit;
     }
+  }
+
+  /**
+   * Update internal rate-limit state from GitHub response headers.
+   */
+  private updateRateLimitFromHeaders(headers: any): void {
+    const limit = parseInt(headers?.['x-ratelimit-limit'] || '');
+    const remaining = parseInt(headers?.['x-ratelimit-remaining'] || '');
+    const reset = parseInt(headers?.['x-ratelimit-reset'] || '');
+    if (!Number.isNaN(limit) && limit > 0) this.rateLimitLimit = limit;
+    if (!Number.isNaN(remaining) && remaining >= 0) this.rateLimitRemaining = remaining;
+    if (!Number.isNaN(reset) && reset > 0) this.rateLimitReset = reset * 1000; // epoch sec -> ms
   }
 
   private async githubApiFetch(url: string, options: AxiosRequestConfig = {}): Promise<AxiosResponse> {
     await this.enforceRateLimit();
-    this.apiRequestCount++;
-    logDebug('GitHubAPI', `Making request ${this.apiRequestCount}/${GITHUB_API_RATE_LIMIT.maxRequestsPerHour}: ${url}`);
+
+    // Log the real remaining quota (or fallback estimate before first response).
+    const resetsInMin = this.rateLimitReset > 0
+      ? Math.max(0, Math.round((this.rateLimitReset - Date.now()) / 60000))
+      : null;
+    logDebug('GitHubAPI', `GET ${url} \u00b7 ${this.rateLimitRemaining}/${this.rateLimitLimit} remaining${resetsInMin !== null ? ` (resets in ${resetsInMin}m)` : ''}`);
 
     try {
       const response = await axios.get(url, options);
+      // Track GitHub's real rate-limit quota from response headers.
+      this.updateRateLimitFromHeaders(response.headers);
       return response;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 403 && error.response.headers['x-ratelimit-remaining'] === '0') {
+        this.updateRateLimitFromHeaders(error.response.headers);
         const resetTime = parseInt(error.response.headers['x-ratelimit-reset'] || '0') * 1000;
         const waitTime = Math.max(resetTime - Date.now(), 0) + 1000;
-        logWarning('GitHubAPI', true, `Rate limit exceeded. Waiting ${waitTime}ms until ${new Date(resetTime).toISOString()}.`);
+        logWarning('GitHubAPI', true, `Rate limit exceeded. Waiting ${Math.round(waitTime / 1000)}s until ${new Date(resetTime).toISOString()}.`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         return this.githubApiFetch(url, options);
       }
@@ -152,7 +171,11 @@ class GithubRateLimiter {
     return response.data.default_branch || 'main';
   }
 
-  public async loadGithubRepo(githubUrl: string, githubToken?: string): Promise<Document[]> {
+  public async loadGithubRepo(
+    githubUrl: string,
+    githubToken?: string,
+    onProgress?: (processed: number, currentFile: string) => Promise<void> | void
+  ): Promise<Document[]> {
     const defaultBranch = await this.enqueue(() => this.getDefaultBranch(githubUrl, githubToken));
     const [_, __, ___, owner, repo] = githubUrl.split('/');
     const baseApiUrl = `https://api.github.com/repos/${owner}/${repo}/contents`;
@@ -160,7 +183,6 @@ class GithubRateLimiter {
     const headers = githubToken ? { Authorization: `token ${githubToken}` } : {};
 
     const docs: Document[] = [];
-    
 
     const fetchContents = async (path: string): Promise<any[]> => {
       const url = `${baseApiUrl}/${path}?ref=${defaultBranch}`;
@@ -179,6 +201,7 @@ class GithubRateLimiter {
               pageContent: content,
               metadata: { source: item.path },
             });
+            if (onProgress) await onProgress(docs.length, item.path);
           } catch (error:any) {
             logWarning('GitHubLoader', `Skipping file ${item.path} due to fetch error: ${error.message}`);
           }
@@ -266,7 +289,24 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
     // Small delay to allow SSE to propagate the stage change to clients
     await new Promise(resolve => setTimeout(resolve, 200));
     const effectiveToken = githubToken || process.env.GITHUB_TOKEN;
-    const docs = await rateLimiter.loadGithubRepo(githubUrl, effectiveToken);
+
+    // Determine total file count upfront so the FETCHING stage shows real progress
+    let fetchTotal = 0;
+    try {
+      fetchTotal = await countGithubRepoFiles(githubUrl, effectiveToken);
+    } catch {
+      // Count is best-effort; fetching continues without a total
+    }
+    await indexingManager.updateProgress(projectId, 0, fetchTotal, 'Fetching files...');
+
+    const docs = await rateLimiter.loadGithubRepo(
+      githubUrl,
+      effectiveToken,
+      async (processed, fileName) => {
+        const total = fetchTotal > 0 ? fetchTotal : processed;
+        await indexingManager.updateProgress(projectId, processed, total, fileName);
+      }
+    );
     logInfo('Indexing', `Loaded ${docs.length} documents for project ${projectId}`);
 
     // Stage 2: PROCESSING - generating summaries, embeddings, and saving to DB
