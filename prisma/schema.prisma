@@ -47,6 +47,7 @@ model Project {
   savedQuestions      Question[]
   meetings            Meeting[]
   Issue               Issue[]
+  conversations       Conversation[]
   
   indexing            ProjectIndexing?
 }
@@ -131,6 +132,29 @@ model Question {
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  title     String   @default("New conversation")
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  messages  Message[]
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+
+  role            String   // "user" | "assistant"
+  content         String
+  fileReferences  Json?
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 }
 
 enum meetingStatus {

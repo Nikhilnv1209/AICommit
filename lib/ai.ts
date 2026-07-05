@@ -46,6 +46,7 @@ interface RateLimitConfig {
 
 const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
   'deepseek-v4-flash': { maxRequestsPerMinute: 60, cooldownMs: 60000 },
+  'deepseek-v4-flash-free': { maxRequestsPerMinute: 60, cooldownMs: 60000 },
   'embed-english-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
   'embed-english-light-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
   'embed-multilingual-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
@@ -289,6 +290,31 @@ class OpenCodeStreamProvider implements StreamProvider {
       if (content) yield content;
     }
   }
+
+  async *streamMessages(messages: Array<{ role: string; content: string }>): AsyncGenerator<{ type: "thinking" | "answer"; content: string }, void, unknown> {
+    const limiter = getRateLimiter(this.model);
+    const response = await limiter.enqueue(async () => {
+      return await this.client.chat.completions.create({
+        model: this.model,
+        messages: messages as any,
+        stream: true,
+        temperature: 0.2,
+        max_tokens: 16000,
+      });
+    });
+
+    for await (const chunk of response) {
+      const delta = chunk.choices[0]?.delta;
+      // Reasoning models (e.g. DeepSeek) put thinking tokens in reasoning_content
+      const thinking = (delta as any)?.reasoning_content || (delta as any)?.reasoning;
+      if (thinking) {
+        yield { type: "thinking" as const, content: thinking };
+      }
+      if (delta?.content) {
+        yield { type: "answer" as const, content: delta.content };
+      }
+    }
+  }
 }
 
 let streamProviderInstance: StreamProvider | null = null;
@@ -304,6 +330,21 @@ export async function* streamAIChat(prompt: string): AsyncGenerator<string, void
   logger.info(`[${provider.name}] Streaming chat response`);
   try {
     for await (const chunk of provider.stream(prompt)) {
+      yield chunk;
+    }
+  } catch (error) {
+    logger.error(`[${provider.name}] Error in streaming chat:`, error);
+    throw error;
+  }
+}
+
+export async function* streamAIChatWithMessages(
+  messages: Array<{ role: string; content: string }>
+): AsyncGenerator<{ type: "thinking" | "answer"; content: string }, void, unknown> {
+  const provider = getStreamProvider() as any;
+  logger.info(`[${provider.name}] Streaming chat response (${messages.length} messages)`);
+  try {
+    for await (const chunk of provider.streamMessages(messages)) {
       yield chunk;
     }
   } catch (error) {

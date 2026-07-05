@@ -1,104 +1,418 @@
 "use client";
-import { getQuestions } from "@/app/actions";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import useProject from "@/hooks/use-project"
-import { useQuery } from "@tanstack/react-query";
-import AskQuestionsCard from "../dashboard/ask-questions-card";
-import React, { useEffect, useState } from "react";
+
+import {
+  createConversation,
+  getConversations,
+  getConversationMessages,
+  sendMessage,
+} from "@/app/actions";
+import useProject from "@/hooks/use-project";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import MDEditor from "@uiw/react-md-editor";
-import CodeReferences from "../dashboard/code-references";
 import { useTheme } from "next-themes";
+import { readStreamableValue } from "@ai-sdk/rsc";
+import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Plus, Send, FileCode, ChevronRight, Loader2, Brain } from "lucide-react";
+import "@/app/markdown-container.css";
+import CodeReferences from "../dashboard/code-references";
+
+type Conversation = {
+  id: string;
+  title: string;
+  updatedAt: string | Date;
+  _count: { messages: number };
+};
+
+type Message = {
+  id: string;
+  role: string;
+  content: string;
+  fileReferences: any;
+  createdAt: string | Date;
+};
 
 const QAPage = () => {
   const { projectId } = useProject();
   const { resolvedTheme } = useTheme();
-  const [questionIndex, setquestionIndex] = useState<number>(0)
-  
-  const { data: questions, status, isFetching } = useQuery({
-    queryKey: ["questions", projectId],
+  const queryClient = useQueryClient();
+
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingContent, setStreamingContent] = useState("");
+  const [streamingThinking, setStreamingThinking] = useState("");
+  const [streamingFiles, setStreamingFiles] = useState<any[]>([]);
+
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Fetch conversation list
+  const { data: conversationsData } = useQuery({
+    queryKey: ["conversations", projectId],
     queryFn: async () => {
-      if (!projectId) return null;
-      return await getQuestions(projectId)
+      if (!projectId) return { success: false, conversations: [] };
+      return await getConversations(projectId);
     },
     enabled: !!projectId,
   });
 
-  // Persistent loading toast while questions query is fetching
-  useEffect(() => {
-    const loading = status === "pending" || isFetching;
-    if (loading) {
-      toast.loading("Loading questions...", { id: "loading-questions" });
-    } else {
-      toast.dismiss("loading-questions");
-    }
-  }, [status, isFetching]);
+  const conversations: Conversation[] = conversationsData?.success
+    ? conversationsData.conversations
+    : [];
 
-  const question = questions?.[questionIndex]
+  // Fetch messages when active conversation changes
+  const { data: messagesData, isLoading: isLoadingMessages } = useQuery({
+    queryKey: ["conversation-messages", activeConversationId],
+    queryFn: async () => {
+      if (!activeConversationId) return { success: false, messages: [], projectId: null };
+      return await getConversationMessages(activeConversationId);
+    },
+    enabled: !!activeConversationId,
+  });
+
+  useEffect(() => {
+    if (messagesData?.success) {
+      setMessages(messagesData.messages);
+    }
+  }, [messagesData]);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamingContent, streamingThinking]);
+
+  // Create new conversation
+  const createConvMutation = useMutation({
+    mutationFn: async () => {
+      if (!projectId) throw new Error("No project selected");
+      return await createConversation(projectId);
+    },
+    onSuccess: (data) => {
+      if (data.success) {
+        queryClient.invalidateQueries({ queryKey: ["conversations", projectId] });
+        setActiveConversationId(data.conversationId!);
+        setMessages([]);
+        setStreamingContent("");
+        inputRef.current?.focus();
+      }
+    },
+    onError: (error: any) => {
+      toast.error(error.message || "Failed to create conversation");
+    },
+  });
+
+  // Send message
+  const handleSend = async () => {
+    if (!input.trim() || isStreaming) return;
+    if (!projectId) {
+      toast.error("Select a project first");
+      return;
+    }
+
+    // If no active conversation, create one first
+    let convId = activeConversationId;
+    if (!convId) {
+      const createRes = await createConversation(projectId);
+      if (!createRes.success) {
+        toast.error("Failed to create conversation");
+        return;
+      }
+      convId = createRes.conversationId!;
+      setActiveConversationId(convId);
+      queryClient.invalidateQueries({ queryKey: ["conversations", projectId] });
+    }
+
+    const userMessage: Message = {
+      id: "temp-" + Date.now(),
+      role: "user",
+      content: input,
+      fileReferences: null,
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    const currentInput = input;
+    setInput("");
+    setIsStreaming(true);
+    setStreamingContent("");
+    setStreamingThinking("");
+    setStreamingFiles([]);
+
+    try {
+      const { output, fileReference } = await sendMessage(convId, currentInput, projectId);
+      if (fileReference) setStreamingFiles(fileReference);
+
+      for await (const delta of readStreamableValue(output) as any) {
+        if (!delta) continue;
+        if (delta.type === "thinking") {
+          setStreamingThinking((prev) => prev + delta.content);
+        } else if (delta.type === "answer") {
+          setStreamingContent((prev) => (prev ? prev + delta.content : delta.content));
+        }
+      }
+
+      // After stream completes, refresh messages from DB to get the saved assistant message
+      queryClient.invalidateQueries({ queryKey: ["conversation-messages", convId] });
+      queryClient.invalidateQueries({ queryKey: ["conversations", projectId] });
+    } catch (error: any) {
+      toast.error(error.message || "Failed to get response");
+    } finally {
+      setIsStreaming(false);
+      setStreamingContent("");
+      setStreamingThinking("");
+      setStreamingFiles([]);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
 
   return (
-    <Sheet>
-      <div className="w-full">
-        <AskQuestionsCard />
-        <div className="h-4"></div>
-        <h1 className="font-mono text-[11px] text-primary mb-3">{"// saved questions"}</h1>
-        <div className="flex flex-col gap-4">
-          {questions?.map((question, index) =>
-            <React.Fragment key={question.id}>
-              <SheetTrigger onClick={() => setquestionIndex(index)} className="w-full text-left">
-                <div className="flex items-start gap-3 bg-card text-card-foreground rounded-lg p-3 border border-border w-full">
-                  <img className="rounded-full object-contain mt-1" height={32} width={32} src={question.user.imageUrl ?? ""}/>
-
-                  <div className="flex flex-col text-left flex-grow min-w-0">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <p className="text-foreground font-medium line-clamp-2">
-                        {question.question}
-                      </p>
-                      <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
-                        {question.createdAt.toLocaleDateString()}
-                      </span>
-                    </div>
-                    <p className="text-muted-foreground line-clamp-2 text-sm mt-1">
-                        {question.answer}
-                      </p>
-                  </div>
-                </div>
-              </SheetTrigger>
-            </React.Fragment>
+    <div className="flex h-[calc(100vh-8rem)] w-full gap-0 overflow-hidden rounded-xl border border-border bg-card">
+      {/* Conversation list */}
+      <div className="flex w-56 shrink-0 flex-col border-r border-border bg-background/30">
+        <div className="border-b border-border p-3">
+          <button
+            onClick={() => createConvMutation.mutate()}
+            disabled={createConvMutation.isPending || !projectId}
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border px-3 py-2 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/[0.02] hover:text-primary disabled:opacity-50"
+          >
+            <Plus className="size-3.5" />
+            new chat
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {conversations.length === 0 ? (
+            <p className="px-2 py-4 font-mono text-[10px] text-muted-foreground/50">
+              no conversations yet
+            </p>
+          ) : (
+            conversations.map((conv) => (
+              <button
+                key={conv.id}
+                onClick={() => {
+                  setActiveConversationId(conv.id);
+                  setStreamingContent("");
+                  setIsStreaming(false);
+                }}
+                className={`mb-1 flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors ${
+                  activeConversationId === conv.id
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                <span className="truncate text-xs font-medium">{conv.title}</span>
+                <span className="font-mono text-[10px] opacity-60">
+                  {conv._count.messages} msgs · {new Date(conv.updatedAt).toLocaleDateString()}
+                </span>
+              </button>
+            ))
           )}
         </div>
-        
-        {
-          question && (
-            <SheetContent 
-              side="right" 
-              className="w-full sm:max-w-none sm:w-[90vw] md:w-[70vw] lg:w-[60vw] xl:w-[50vw] h-screen flex flex-col p-4 sm:p-6"
-            >
-              <SheetHeader className="flex-shrink-0">
-                <SheetTitle className="break-words font-mono text-base sm:text-lg md:text-xl">
-                  {question.question}
-                </SheetTitle>
-              </SheetHeader>
-              <div className="flex-grow overflow-y-auto overflow-x-hidden mt-4">
-                <div 
-                  data-color-mode={resolvedTheme === 'dark' ? 'dark' : 'light'}
-                  className="prose prose-sm sm:prose-base max-w-none"
-                >
-                  <MDEditor.Markdown 
-                    className="!bg-transparent !text-foreground !max-h-none !overflow-visible [&_pre]:!bg-muted/40 [&_pre]:!text-foreground [&_pre]:!border [&_code]:!text-foreground"
-                    source={question.answer}
-                  />
-                </div>
-                <div className="mt-6">
-                  <CodeReferences fileReferences={(question.fileReferences ?? []) as any} />
-                </div>
-              </div>
-            </SheetContent>
-          )
-        }
       </div>
-    </Sheet>
-  )
+
+      {/* Chat thread */}
+      <div className="flex flex-1 flex-col">
+        {!activeConversationId && messages.length === 0 && !isStreaming ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+            <div className="flex size-12 items-center justify-center rounded-lg border border-border bg-background">
+              <FileCode className="size-5 text-primary" />
+            </div>
+            <div>
+              <p className="font-mono text-sm font-medium">ask the codebase</p>
+              <p className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+                start a conversation or pick one from the left
+              </p>
+            </div>
+            <button
+              onClick={() => createConvMutation.mutate()}
+              disabled={createConvMutation.isPending || !projectId}
+              className="mt-2 flex items-center gap-2 rounded-md bg-primary px-4 py-2 font-mono text-xs text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              <Plus className="size-3.5" />
+              start a new chat
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              <div className="mx-auto max-w-3xl space-y-4">
+                {isLoadingMessages && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+                {messages.map((msg) => (
+                  <MessageBubble
+                    key={msg.id}
+                    role={msg.role}
+                    content={msg.content}
+                    fileReferences={msg.fileReferences}
+                    resolvedTheme={resolvedTheme}
+                  />
+                ))}
+
+                {/* Streaming response */}
+                {isStreaming && (
+                  <MessageBubble
+                    role="assistant"
+                    content={streamingContent || ""}
+                    thinking={streamingThinking || undefined}
+                    fileReferences={streamingFiles.length > 0 ? streamingFiles : null}
+                    resolvedTheme={resolvedTheme}
+                    isStreaming={true}
+                  />
+                )}
+
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            {/* Input */}
+            <div className="border-t border-border p-4">
+              <div className="mx-auto max-w-3xl">
+                <div className="relative flex items-end gap-2 rounded-lg border border-border bg-background p-2">
+                  <textarea
+                    ref={inputRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="ask a question... (enter to send, shift+enter for newline)"
+                    rows={1}
+                    className="max-h-32 flex-1 resize-none bg-transparent px-2 py-1.5 font-mono text-sm placeholder:text-muted-foreground/50 focus:outline-none"
+                    style={{ minHeight: "36px" }}
+                    disabled={isStreaming}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim() || isStreaming}
+                    className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-30"
+                  >
+                    {isStreaming ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Send className="size-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="mt-1.5 px-2 font-mono text-[10px] text-muted-foreground/50">
+                  answers are auto-saved to this conversation
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+function MessageBubble({
+  role,
+  content,
+  fileReferences,
+  resolvedTheme,
+  isStreaming,
+  thinking,
+}: {
+  role: string;
+  content: string;
+  fileReferences: any;
+  resolvedTheme: string | undefined;
+  isStreaming?: boolean;
+  thinking?: string;
+}) {
+  const isUser = role === "user";
+  const [showFiles, setShowFiles] = useState(false);
+  const [showThinking, setShowThinking] = useState(true);
+
+  // Auto-collapse thinking when answer starts arriving
+  useEffect(() => {
+    if (content) setShowThinking(false);
+  }, [content]);
+
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div className={`max-w-[85%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1.5`}>
+        <div
+          className={`rounded-lg px-4 py-3 text-[13px] leading-relaxed ${
+            isUser
+              ? "bg-primary/10 text-foreground"
+              : "border border-border bg-background text-foreground"
+          }`}
+        >
+          {isUser ? (
+            <p className="whitespace-pre-wrap">{content}</p>
+          ) : (
+            <>
+              {/* Thinking section (reasoning models only) */}
+              {thinking && (
+                <div className="mb-2.5 rounded-md border border-border/40 bg-muted/10 px-3 py-2">
+                  <button
+                    onClick={() => setShowThinking(!showThinking)}
+                    className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+                  >
+                    <Brain className="size-3" />
+                    <span>thinking</span>
+                    <ChevronRight className={`size-2.5 transition-transform ${showThinking ? "rotate-90" : ""}`} />
+                  </button>
+                  {showThinking && (
+                    <p className="mt-1.5 max-h-60 overflow-y-auto whitespace-pre-wrap font-mono text-[11px] leading-[1.6] text-muted-foreground/60">
+                      {thinking}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {content ? (
+                <div
+                  data-color-mode={resolvedTheme === "dark" ? "dark" : "light"}
+                  className="prose prose-sm max-w-none prose-p:leading-relaxed prose-p:my-2 prose-headings:font-mono prose-headings:font-semibold prose-h1:text-base prose-h2:text-sm prose-h3:text-[13px] prose-code:rounded prose-code:bg-muted/40 prose-code:px-1 prose-code:py-0.5 prose-code:before:content-none prose-code:after:content-none prose-pre:bg-muted/40 prose-pre:border prose-pre:rounded-md prose-a:text-primary prose-a:no-underline prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-blockquote:border-l-primary/30 prose-blockquote:pl-3 [&_pre]:!bg-muted/40 [&_pre]:!border [&_code]:!text-foreground"
+                >
+                  <MDEditor.Markdown source={content} />
+                  {isStreaming && (
+                    <span className="animate-blink ml-0.5 inline-block h-3.5 w-[7px] translate-y-[1px] bg-primary" />
+                  )}
+                </div>
+              ) : !thinking ? (
+                <div className="flex items-center gap-2 py-1">
+                  <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                  <span className="font-mono text-[11px] text-muted-foreground">thinking…</span>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {/* File references */}
+        {fileReferences && fileReferences.length > 0 && (
+          <div className="w-full">
+            <button
+              onClick={() => setShowFiles(!showFiles)}
+              className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground transition-colors hover:text-primary"
+            >
+              <ChevronRight
+                className={`size-3 transition-transform ${showFiles ? "rotate-90" : ""}`}
+              />
+              {fileReferences.length} file{fileReferences.length > 1 ? "s" : ""} referenced
+            </button>
+            {showFiles && (
+              <div className="mt-1.5">
+                <CodeReferences fileReferences={fileReferences} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
-export default QAPage
+export default QAPage;

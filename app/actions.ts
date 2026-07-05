@@ -4,7 +4,7 @@ import { prisma } from "@/prisma/client";
 import { auth } from "@clerk/nextjs/server";
 import { pollCommits } from "@/lib/github";
 import { indexGithubRepo, countGithubRepoFiles } from "@/lib/github-loader";
-import { aiGenerateEmbeddings, getStreamProvider, streamAIChat } from './../lib/ai';
+import { aiGenerateEmbeddings, getStreamProvider, streamAIChat, streamAIChatWithMessages } from './../lib/ai';
 import { createStreamableValue } from "@ai-sdk/rsc";
 import { logError, logInfo } from '@/lib/logger';
 import cloudinary from "@/lib/cloudinary";
@@ -20,6 +20,7 @@ export async function askQuestion(question: string, projectId: string) {
   const queryVector = await aiGenerateEmbeddings(question);
   const VectorQuery = `[${queryVector.join(",")}]`;
 
+  // Vector similarity search — find files whose summaries match the question
   const result = await prisma.$queryRaw`
     SELECT "fileName", "sourceCode", "summary",
     1 - ("summeryEmbeddings" <=> ${VectorQuery}::vector) AS similarity
@@ -28,37 +29,76 @@ export async function askQuestion(question: string, projectId: string) {
     1 - ("summeryEmbeddings" <=> ${VectorQuery}::vector) > 0.5
     ORDER BY similarity DESC
     LIMIT 10
-  ` as { fileName: string, sourceCode: string, summary: string }[];
+  ` as { fileName: string, sourceCode: string, summary: string, similarity: number }[];
 
-  let context = "";
-  for (const data of result) {
-    context += `source: ${data.fileName}
+  // Determine the mode: specific (high similarity) vs general (overview)
+  const hasStrongMatch = result.length > 0 && result[0].similarity > 0.5;
+
+  let prompt: string;
+  let fileReference: { fileName: string; sourceCode: string; summary: string }[] = [];
+
+  if (hasStrongMatch) {
+    // ── SPECIFIC MODE: send full source code of matched files ──
+    fileReference = result.map(r => ({ fileName: r.fileName, sourceCode: r.sourceCode, summary: r.summary }));
+
+    let context = "";
+    for (const data of result) {
+      context += `source: ${data.fileName}
  code content: ${data.sourceCode}
  summary of file: ${data.summary}
 
 `;
-  }
+    }
 
-  const prompt = `
-    AI assistant is a brand new, powerful, human-like artificial intelligence.
-    The traits of AI include expert knowledge, helpfulness, cleverness, and articulateness.
-    AI is a well-behaved and well-mannered individual.
-    AI will answer all questions in the Markdown format, including code snippets, proper Markdown formatting and emojis. Also include proper indentations and line breaks.
-    AI will not answer any questions that are not related to the context provided.
-    AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
-    If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions, including code snippets.
-    START CONTEXT BLOCK
+    prompt = `
+    AI assistant is a senior software engineer with access to the project's source code.
+    Answer in Markdown format with code snippets where relevant.
+
+    START CONTEXT BLOCK (matched files)
     ${context}
     END OF CONTEXT BLOCK
 
     START QUESTION
     ${question}
     END OF QUESTION
-    AI assistant will take into account any CONTEXT BLOCK that is provided in a conversation.
-    If the context does not provide the answer to question, the AI assistant will say, "I'm sorry, but I don't know the answer to that question".
-    AI assistant will not apologize for previous responses, but instead will indicate new information was gained.
-    AI assistant will not invent anything that is not drawn directly from the context.
-  `;
+
+    Rules:
+    - Answer based on the code context provided above.
+    - If asking about a specific file, provide step-by-step details with code snippets.
+    - If the context does not contain the answer, say "I don't have enough context to answer that."
+    - Do not invent information not present in the context.
+    `;
+  } else {
+    // ── GENERAL MODE: send all file summaries (no full code — keeps prompt compact) ──
+    const allFiles = await prisma.sourceCodeEmbedding.findMany({
+      where: { projectId },
+      select: { fileName: true, summary: true },
+    });
+
+    const summaryList = allFiles
+      .map(f => `- ${f.fileName}: ${f.summary}`)
+      .join("\n");
+
+    prompt = `
+    AI assistant is a senior software engineer helping someone understand a codebase.
+    Below is a list of every file in the project with a short AI-generated summary of what each does.
+    Answer in Markdown format.
+
+    START FILE SUMMARIES (${allFiles.length} files)
+    ${summaryList}
+    END FILE SUMMARIES
+
+    START QUESTION
+    ${question}
+    END OF QUESTION
+
+    Rules:
+    - This is an overview/general question. Answer based on the file summaries above.
+    - When relevant, mention which file(s) are related to the answer.
+    - If the question is about a specific implementation detail, mention which file to look at and suggest asking a more specific question about that file.
+    - Do not invent files or functionality not described in the summaries.
+    `;
+  }
 
   (async () => {
     try {
@@ -74,7 +114,7 @@ export async function askQuestion(question: string, projectId: string) {
 
   return {
     output: stream.value,
-    fileReference: result,
+    fileReference,
   };
 }
 
@@ -650,5 +690,219 @@ export async function getUserCredits() {
   } catch (error: any) {
     logError('GetUserCredits', 'Error fetching user credits:', error);
     return { success: false, error: error.message || "Failed to fetch credits." };
+  }
+}
+
+// ============================================================
+// CONVERSATIONAL Q&A
+// ============================================================
+
+export async function createConversation(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const project = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        userToProject: { some: { userId } },
+      },
+    });
+    if (!project) throw new Error("Project not found or access denied");
+
+    const conversation = await prisma.conversation.create({
+      data: { projectId, title: "New conversation" },
+    });
+
+    return { success: true, conversationId: conversation.id };
+  } catch (error: any) {
+    logError('CreateConversation', 'Error creating conversation:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getConversations(projectId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const conversations = await prisma.conversation.findMany({
+      where: { projectId },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        title: true,
+        updatedAt: true,
+        _count: { select: { messages: true } },
+      },
+    });
+
+    return { success: true, conversations };
+  } catch (error: any) {
+    logError('GetConversations', 'Error fetching conversations:', error);
+    return { success: false, conversations: [] };
+  }
+}
+
+export async function getConversationMessages(conversationId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: {
+        messages: { orderBy: { createdAt: "asc" } },
+        project: { select: { id: true } },
+      },
+    });
+
+    if (!conversation) throw new Error("Conversation not found");
+
+    // Verify access
+    const access = await prisma.project.findFirst({
+      where: {
+        id: conversation.projectId,
+        userToProject: { some: { userId } },
+      },
+    });
+    if (!access) throw new Error("Access denied");
+
+    return {
+      success: true,
+      messages: conversation.messages,
+      projectId: conversation.projectId,
+    };
+  } catch (error: any) {
+    logError('GetConversationMessages', 'Error fetching messages:', error);
+    return { success: false, messages: [], projectId: null };
+  }
+}
+
+export async function sendMessage(
+  conversationId: string,
+  content: string,
+  projectId: string
+) {
+  const stream = createStreamableValue();
+  const provider = getStreamProvider();
+
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    // 1. Save user message immediately
+    await prisma.message.create({
+      data: { conversationId, role: "user", content },
+    });
+
+    // 2. Auto-title the conversation from the first user message
+    await prisma.conversation.updateMany({
+      where: { id: conversationId, title: "New conversation" },
+      data: { title: content.slice(0, 50) },
+    });
+
+    // 3. Fetch conversation history (last 20 messages to stay within token limits)
+    const history = await prisma.message.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: "asc" },
+      take: 20,
+    });
+
+    // 4. RAG retrieval for the latest user message (two-mode logic)
+    const queryVector = await aiGenerateEmbeddings(content);
+    const VectorQuery = `[${queryVector.join(",")}]`;
+
+    const result = await prisma.$queryRaw`
+      SELECT "fileName", "sourceCode", "summary",
+      1 - ("summeryEmbeddings" <=> ${VectorQuery}::vector) AS similarity
+      from "SourceCodeEmbedding" where
+      "projectId" = ${projectId} AND
+      1 - ("summeryEmbeddings" <=> ${VectorQuery}::vector) > 0.3
+      ORDER BY similarity DESC
+      LIMIT 10
+    ` as { fileName: string, sourceCode: string, summary: string, similarity: number }[];
+
+    const hasStrongMatch = result.length > 0 && result[0].similarity > 0.3;
+    let fileReference: { fileName: string; sourceCode: string; summary: string }[] = [];
+    let contextBlock = "";
+
+    if (hasStrongMatch) {
+      fileReference = result.map(r => ({ fileName: r.fileName, sourceCode: r.sourceCode, summary: r.summary }));
+      for (const data of result) {
+        contextBlock += `source: ${data.fileName}
+ code content: ${data.sourceCode}
+ summary of file: ${data.summary}
+
+`;
+      }
+    } else {
+      const allFiles = await prisma.sourceCodeEmbedding.findMany({
+        where: { projectId },
+        select: { fileName: true, summary: true },
+      });
+      contextBlock = `FILE SUMMARIES (${allFiles.length} files):
+${allFiles.map(f => `- ${f.fileName}: ${f.summary}`).join("\n")}`;
+    }
+
+    // 5. Build the chat messages array (OpenAI format) with system prompt + context
+    const chatMessages = [
+      {
+        role: "system",
+        content: hasStrongMatch
+          ? `You are a senior software engineer with access to the project's source code. Answer in Markdown format with code snippets where relevant. Base your answer on the code context provided. If the exact file isn't in the context but is referenced by other files, mention what you found and point the user to the relevant files. Be helpful — share what you can deduce from the available context rather than refusing. Do not invent information.
+
+CONTEXT BLOCK (matched files):
+${contextBlock}`
+          : `You are a senior software engineer helping someone understand a codebase. Below is a list of every file with a short summary. Answer in Markdown format. When relevant, mention which file(s) are related and what they do based on the summaries. If a file is referenced by name but not in the list, mention that it likely exists and suggest the user ask about it specifically. Do not invent files or functionality not described in the summaries.
+
+${contextBlock}`,
+      },
+      ...history.map(m => ({
+        role: m.role,
+        content: m.content,
+      })),
+    ];
+
+    // 6. Stream the AI response and auto-save it
+    (async () => {
+      let fullResponse = "";
+      try {
+        for await (const chunk of streamAIChatWithMessages(chatMessages as any)) {
+          if (chunk.type === "thinking") {
+            stream.update({ type: "thinking", content: chunk.content });
+          } else {
+            fullResponse += chunk.content;
+            stream.update({ type: "answer", content: chunk.content });
+          }
+        }
+        stream.done();
+
+        // Save assistant message with file references
+        await prisma.message.create({
+          data: {
+            conversationId,
+            role: "assistant",
+            content: fullResponse,
+            fileReferences: fileReference.length > 0 ? fileReference : undefined,
+          },
+        });
+
+        // Update conversation timestamp
+        await prisma.conversation.update({
+          where: { id: conversationId },
+          data: { updatedAt: new Date() },
+        });
+      } catch (error) {
+        logError('SendMessage', `Error streaming from ${provider.name}:`, error);
+        stream.error(new Error("Failed to generate response"));
+      }
+    })();
+
+    return { output: stream.value, fileReference };
+  } catch (error: any) {
+    logError('SendMessage', 'Error in sendMessage:', error);
+    stream.error(new Error(error.message || "Failed to send message"));
+    return { output: stream.value, fileReference: [] };
   }
 }
