@@ -727,7 +727,7 @@ export async function getConversations(projectId: string) {
     if (!userId) throw new Error("User not found.");
 
     const conversations = await prisma.conversation.findMany({
-      where: { projectId },
+      where: { projectId, deletedAt: null },
       orderBy: { updatedAt: "desc" },
       select: {
         id: true,
@@ -741,6 +741,35 @@ export async function getConversations(projectId: string) {
   } catch (error: any) {
     logError('GetConversations', 'Error fetching conversations:', error);
     return { success: false, conversations: [] };
+  }
+}
+
+export async function deleteConversation(conversationId: string) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    // Soft delete: mark as deleted immediately
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { deletedAt: new Date() },
+    });
+
+    // Schedule hard delete after 30s (fire-and-forget, off the critical path)
+    setTimeout(async () => {
+      try {
+        await prisma.conversation.delete({
+          where: { id: conversationId },
+        });
+      } catch {
+        // Already deleted or doesn't exist — ignore
+      }
+    }, 30_000);
+
+    return { success: true };
+  } catch (error: any) {
+    logError('DeleteConversation', 'Error:', error);
+    return { success: false, error: error.message };
   }
 }
 

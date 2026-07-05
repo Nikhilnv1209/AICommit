@@ -6,6 +6,7 @@ import {
   getConversationMessages,
   sendMessage,
   editMessage,
+  deleteConversation,
 } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -14,7 +15,7 @@ import { useTheme } from "next-themes";
 import { readStreamableValue } from "@ai-sdk/rsc";
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Send, FileCode, ChevronRight, Loader2, Brain, Pencil } from "lucide-react";
+import { Plus, Send, FileCode, ChevronRight, Loader2, Brain, Pencil, Trash2 } from "lucide-react";
 import "@/app/markdown-container.css";
 import CodeReferences from "../dashboard/code-references";
 
@@ -106,6 +107,21 @@ const QAPage = () => {
       toast.error(error.message || "Failed to create conversation");
     },
   });
+
+  // Delete conversation
+  const handleDeleteConversation = async (conversationId: string) => {
+    const res = await deleteConversation(conversationId);
+    if (res.success) {
+      if (activeConversationId === conversationId) {
+        setActiveConversationId(null);
+        setMessages([]);
+      }
+      queryClient.invalidateQueries({ queryKey: ["conversations", projectId] });
+      toast.success("Conversation deleted");
+    } else {
+      toast.error("Failed to delete conversation");
+    }
+  };
 
   // Send message
   const handleSend = async () => {
@@ -248,7 +264,7 @@ const QAPage = () => {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] w-full gap-0 overflow-hidden rounded-xl border border-border bg-card">
+    <div className="flex h-full w-full gap-0 overflow-hidden rounded-xl border border-border bg-card">
       {/* Conversation list */}
       <div className="flex w-56 shrink-0 flex-col border-r border-border bg-background/30">
         <div className="border-b border-border p-3">
@@ -268,24 +284,37 @@ const QAPage = () => {
             </p>
           ) : (
             conversations.map((conv) => (
-              <button
+              <div
                 key={conv.id}
-                onClick={() => {
-                  setActiveConversationId(conv.id);
-                  setStreamingContent("");
-                  setIsStreaming(false);
-                }}
-                className={`mb-1 flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors ${
+                className={`group mb-1 flex w-full items-center gap-1 rounded-md px-3 py-2 text-left transition-colors ${
                   activeConversationId === conv.id
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground"
                 }`}
               >
-                <span className="truncate text-xs font-medium">{conv.title}</span>
-                <span className="font-mono text-[10px] opacity-60">
-                  {conv._count.messages} msgs · {new Date(conv.updatedAt).toLocaleDateString()}
-                </span>
-              </button>
+                <button
+                  onClick={() => {
+                    setActiveConversationId(conv.id);
+                    setStreamingContent("");
+                    setIsStreaming(false);
+                  }}
+                  className="flex w-full flex-1 flex-col gap-0.5 overflow-hidden text-left"
+                >
+                  <span className="truncate text-xs font-medium">{conv.title}</span>
+                  <span className="font-mono text-[10px] opacity-60">
+                    {conv._count.messages} msgs · {new Date(conv.updatedAt).toLocaleDateString()}
+                  </span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteConversation(conv.id);
+                  }}
+                  className="shrink-0 text-muted-foreground/40 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
             ))
           )}
         </div>
