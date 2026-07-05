@@ -3,6 +3,7 @@
 import {
   createConversation,
   sendMessage,
+  editMessage,
   getConversationMessages,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import useProject from "@/hooks/use-project";
 import { readStreamableValue } from "@ai-sdk/rsc";
-import { Loader2, Send, FileCode, ChevronRight, X, Brain } from "lucide-react";
+import { Loader2, Send, FileCode, ChevronRight, X, Brain, Pencil } from "lucide-react";
 import MDEditor from "@uiw/react-md-editor";
 import { useTheme } from "next-themes";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
@@ -32,6 +33,7 @@ const AskQuestionsCard = () => {
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
 
+  const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -41,11 +43,13 @@ const AskQuestionsCard = () => {
   const [streamingThinking, setStreamingThinking] = useState("");
   const [streamingFiles, setStreamingFiles] = useState<any[]>([]);
 
+  useEffect(() => setMounted(true), []);
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
   }, [messages, streamingContent, streamingThinking]);
 
   // Load messages when conversationId changes
@@ -109,16 +113,27 @@ const AskQuestionsCard = () => {
       const { output, fileReference } = await sendMessage(convId, currentQuestion, project.id);
       if (fileReference) setStreamingFiles(fileReference);
 
+      let fullResponse = "";
       for await (const delta of readStreamableValue(output) as any) {
         if (!delta) continue;
         if (delta.type === "thinking") {
           setStreamingThinking((prev) => prev + delta.content);
         } else if (delta.type === "answer") {
+          fullResponse += delta.content;
           setStreamingContent((prev) => (prev ? prev + delta.content : delta.content));
         }
       }
 
-      // Refresh messages from DB to get the saved assistant message
+      // Add assistant message to local state immediately (no gap)
+      setMessages((prev) => [...prev, {
+        id: "temp-assistant-" + Date.now(),
+        role: "assistant",
+        content: fullResponse,
+        fileReferences: fileReference && fileReference.length > 0 ? fileReference : null,
+        createdAt: new Date().toISOString(),
+      }]);
+
+      // Refresh from DB to get the real message with proper ID
       const res = await getConversationMessages(convId);
       if (res.success) setMessages(res.messages);
       queryClient.invalidateQueries({ queryKey: ["conversations", project?.id] });
@@ -136,6 +151,66 @@ const AskQuestionsCard = () => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+    }
+  };
+
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    if (!conversationId || !project?.id) return;
+
+    const editIndex = messages.findIndex((m) => m.id === messageId);
+    if (editIndex === -1) return;
+
+    // Truncate messages after the edited one, replace with new user message
+    const updatedMessages = messages.slice(0, editIndex);
+    updatedMessages.push({
+      id: "temp-" + Date.now(),
+      role: "user",
+      content: newContent,
+      fileReferences: null,
+      createdAt: new Date().toISOString(),
+    });
+    setMessages(updatedMessages);
+
+    setIsStreaming(true);
+    setStreamingContent("");
+    setStreamingThinking("");
+    setStreamingFiles([]);
+
+    try {
+      const { output, fileReference } = await editMessage(messageId, newContent, conversationId, project.id);
+      if (fileReference) setStreamingFiles(fileReference);
+
+      let fullResponse = "";
+      for await (const delta of readStreamableValue(output) as any) {
+        if (!delta) continue;
+        if (delta.type === "thinking") {
+          setStreamingThinking((prev) => prev + delta.content);
+        } else if (delta.type === "answer") {
+          fullResponse += delta.content;
+          setStreamingContent((prev) => (prev ? prev + delta.content : delta.content));
+        }
+      }
+
+      // Add assistant message to local state immediately (no gap)
+      setMessages((prev) => [...prev, {
+        id: "temp-assistant-" + Date.now(),
+        role: "assistant",
+        content: fullResponse,
+        fileReferences: fileReference && fileReference.length > 0 ? fileReference : null,
+        createdAt: new Date().toISOString(),
+      }]);
+
+      // Refresh from DB to get the real message with proper ID
+      const res = await getConversationMessages(conversationId);
+      if (res.success) setMessages(res.messages);
+      queryClient.invalidateQueries({ queryKey: ["conversations", project?.id] });
+    } catch (error: any) {
+      toast.error(error.message || "Failed to edit message");
+    } finally {
+      setIsStreaming(false);
+      setStreamingContent("");
+      setStreamingThinking("");
+      setStreamingFiles([]);
     }
   };
 
@@ -173,10 +248,12 @@ const AskQuestionsCard = () => {
               {messages.map((msg) => (
                 <MessageBubble
                   key={msg.id}
+                  id={msg.id}
                   role={msg.role}
                   content={msg.content}
                   fileReferences={msg.fileReferences}
                   resolvedTheme={resolvedTheme}
+                  onEdit={handleEditMessage}
                 />
               ))}
 
@@ -253,7 +330,7 @@ const AskQuestionsCard = () => {
                   }
                 }}
                 className="h-24 w-full resize-none border-border bg-background pl-8 font-mono text-sm placeholder:text-muted-foreground/50 focus-visible:ring-primary/30"
-                disabled={!project}
+                disabled={!mounted || !project}
               />
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
@@ -262,7 +339,7 @@ const AskQuestionsCard = () => {
               </p>
               <Button
                 type="submit"
-                disabled={!question.trim() || !project}
+                disabled={!mounted || !question.trim() || !project}
                 size="sm"
                 className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
@@ -277,28 +354,45 @@ const AskQuestionsCard = () => {
 };
 
 function MessageBubble({
+  id,
   role,
   content,
   fileReferences,
   resolvedTheme,
   isStreaming,
   thinking,
+  onEdit,
 }: {
+  id?: string;
   role: string;
   content: string;
   fileReferences: any;
   resolvedTheme: string | undefined;
   isStreaming?: boolean;
   thinking?: string;
+  onEdit?: (messageId: string, newContent: string) => void;
 }) {
   const isUser = role === "user";
   const [showFiles, setShowFiles] = useState(false);
-  const [showThinking, setShowThinking] = useState(true);
+  const [userToggledThinking, setUserToggledThinking] = useState(false);
+  const [userShowThinking, setUserShowThinking] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(content);
 
-  // Auto-collapse thinking when answer starts arriving
-  useEffect(() => {
-    if (content) setShowThinking(false);
-  }, [content]);
+  // Derived: auto-collapse thinking when answer starts, unless user manually toggled
+  const showThinking = userToggledThinking ? userShowThinking : !content;
+
+  const toggleThinking = () => {
+    setUserToggledThinking(true);
+    setUserShowThinking((prev) => !prev);
+  };
+
+  const handleSaveEdit = () => {
+    if (editContent.trim() && onEdit && id) {
+      onEdit(id, editContent.trim());
+      setIsEditing(false);
+    }
+  };
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -311,14 +405,59 @@ function MessageBubble({
           }`}
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap">{content}</p>
+            isEditing ? (
+              <div className="flex flex-col gap-2 min-w-[240px]">
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSaveEdit();
+                    } else if (e.key === "Escape") {
+                      setEditContent(content);
+                      setIsEditing(false);
+                    }
+                  }}
+                  autoFocus
+                  rows={2}
+                  className="w-full resize-none rounded-md border border-border bg-background p-2 font-mono text-[13px] focus:outline-none focus:ring-1 focus:ring-primary/30"
+                />
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => { setEditContent(content); setIsEditing(false); }}
+                    className="font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    cancel
+                  </button>
+                  <button
+                    onClick={handleSaveEdit}
+                    className="font-mono text-[10px] text-primary transition-colors hover:text-primary/80"
+                  >
+                    send ↵
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="group relative">
+                <p className="whitespace-pre-wrap pr-6">{content}</p>
+                {onEdit && id && (
+                  <button
+                    onClick={() => { setEditContent(content); setIsEditing(true); }}
+                    className="absolute -right-1 -top-1 text-muted-foreground/50 opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
+                  >
+                    <Pencil className="size-3" />
+                  </button>
+                )}
+              </div>
+            )
           ) : (
             <>
               {/* Thinking section (reasoning models only) */}
               {thinking && (
                 <div className="mb-2.5 rounded-md border border-border/40 bg-muted/10 px-3 py-2">
                   <button
-                    onClick={() => setShowThinking(!showThinking)}
+                    onClick={toggleThinking}
                     className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
                   >
                     <Brain className="size-3" />

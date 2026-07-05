@@ -779,7 +779,8 @@ export async function getConversationMessages(conversationId: string) {
   }
 }
 
-export async function sendMessage(
+// Shared helper: RAG retrieval + stream AI response + auto-save
+async function buildAndStreamResponse(
   conversationId: string,
   content: string,
   projectId: string
@@ -788,28 +789,14 @@ export async function sendMessage(
   const provider = getStreamProvider();
 
   try {
-    const { userId } = await auth();
-    if (!userId) throw new Error("User not found.");
-
-    // 1. Save user message immediately
-    await prisma.message.create({
-      data: { conversationId, role: "user", content },
-    });
-
-    // 2. Auto-title the conversation from the first user message
-    await prisma.conversation.updateMany({
-      where: { id: conversationId, title: "New conversation" },
-      data: { title: content.slice(0, 50) },
-    });
-
-    // 3. Fetch conversation history (last 20 messages to stay within token limits)
+    // Fetch conversation history (last 20 messages to stay within token limits)
     const history = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: "asc" },
       take: 20,
     });
 
-    // 4. RAG retrieval for the latest user message (two-mode logic)
+    // RAG retrieval for the latest user message (two-mode logic)
     const queryVector = await aiGenerateEmbeddings(content);
     const VectorQuery = `[${queryVector.join(",")}]`;
 
@@ -845,7 +832,7 @@ export async function sendMessage(
 ${allFiles.map(f => `- ${f.fileName}: ${f.summary}`).join("\n")}`;
     }
 
-    // 5. Build the chat messages array (OpenAI format) with system prompt + context
+    // Build the chat messages array (OpenAI format) with system prompt + context
     const chatMessages = [
       {
         role: "system",
@@ -864,7 +851,7 @@ ${contextBlock}`,
       })),
     ];
 
-    // 6. Stream the AI response and auto-save it
+    // Stream the AI response and auto-save it
     (async () => {
       let fullResponse = "";
       try {
@@ -876,9 +863,9 @@ ${contextBlock}`,
             stream.update({ type: "answer", content: chunk.content });
           }
         }
-        stream.done();
 
-        // Save assistant message with file references
+        // Save to DB BEFORE signaling stream done
+        // so the client's DB refresh finds the message
         await prisma.message.create({
           data: {
             conversationId,
@@ -888,21 +875,90 @@ ${contextBlock}`,
           },
         });
 
-        // Update conversation timestamp
         await prisma.conversation.update({
           where: { id: conversationId },
           data: { updatedAt: new Date() },
         });
+
+        stream.done();
       } catch (error) {
-        logError('SendMessage', `Error streaming from ${provider.name}:`, error);
+        logError('StreamResponse', `Error streaming from ${provider.name}:`, error);
         stream.error(new Error("Failed to generate response"));
       }
     })();
 
     return { output: stream.value, fileReference };
   } catch (error: any) {
+    logError('BuildAndStream', 'Error:', error);
+    stream.error(new Error(error.message || "Failed to generate response"));
+    return { output: stream.value, fileReference: [] };
+  }
+}
+
+export async function sendMessage(
+  conversationId: string,
+  content: string,
+  projectId: string
+) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    // Save user message immediately
+    await prisma.message.create({
+      data: { conversationId, role: "user", content },
+    });
+
+    // Auto-title the conversation from the first user message
+    await prisma.conversation.updateMany({
+      where: { id: conversationId, title: "New conversation" },
+      data: { title: content.slice(0, 50) },
+    });
+
+    return await buildAndStreamResponse(conversationId, content, projectId);
+  } catch (error: any) {
     logError('SendMessage', 'Error in sendMessage:', error);
+    const stream = createStreamableValue();
     stream.error(new Error(error.message || "Failed to send message"));
+    return { output: stream.value, fileReference: [] };
+  }
+}
+
+export async function editMessage(
+  messageId: string,
+  newContent: string,
+  conversationId: string,
+  projectId: string
+) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    // Find the edited message to get its timestamp
+    const editedMessage = await prisma.message.findUnique({
+      where: { id: messageId },
+      select: { createdAt: true },
+    });
+    if (!editedMessage) throw new Error("Message not found");
+
+    // Delete the edited message and all messages after it
+    await prisma.message.deleteMany({
+      where: {
+        conversationId,
+        createdAt: { gte: editedMessage.createdAt },
+      },
+    });
+
+    // Create new user message with edited content
+    await prisma.message.create({
+      data: { conversationId, role: "user", content: newContent },
+    });
+
+    return await buildAndStreamResponse(conversationId, newContent, projectId);
+  } catch (error: any) {
+    logError('EditMessage', 'Error in editMessage:', error);
+    const stream = createStreamableValue();
+    stream.error(new Error(error.message || "Failed to edit message"));
     return { output: stream.value, fileReference: [] };
   }
 }
