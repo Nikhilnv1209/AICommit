@@ -47,7 +47,8 @@ const GRAPH_TYPES: { id: GraphType; label: string; icon: typeof FileCode }[] = [
   { id: "classes", label: "Class Hierarchy", icon: GitFork },
 ];
 
-const getNodeRadius = (degree: number) => Math.max(8, Math.min(20, 8 + degree * 1.2));
+const NODE_REL_SIZE = 6;
+const getNodeRadius = (degree: number) => Math.sqrt(Math.max(1, degree + 1)) * NODE_REL_SIZE;
 
 const GraphPage = () => {
   const { projectId } = useProject();
@@ -58,6 +59,7 @@ const GraphPage = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightNodes, setHighlightNodes] = useState<Set<string> | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const fgRef = useRef<any>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 
   useEffect(() => setMounted(true), []);
@@ -91,6 +93,48 @@ const GraphPage = () => {
     if (!data?.success) return { nodes: [], links: [] };
     return data.graph as { nodes: GraphNode[]; links: GraphLink[] };
   }, [data]);
+
+  // Configure force simulation when graph data changes
+  useEffect(() => {
+    if (graph.nodes.length === 0) return;
+
+    let cancelled = false;
+
+    const apply = () => {
+      if (cancelled) return;
+      const fg = fgRef.current;
+      if (!fg) {
+        setTimeout(apply, 100);
+        return;
+      }
+
+      const charge = fg.d3Force('charge');
+      if (charge) charge.strength(-400);
+
+      const link = fg.d3Force('link');
+      if (link) link.distance(80).strength(0.4);
+
+      const center = fg.d3Force('center');
+      if (center) center.strength(0);
+
+      fg.d3ReheatSimulation();
+    };
+
+    setTimeout(apply, 100);
+
+    return () => { cancelled = true; };
+  }, [graph]);
+
+  // Fit view once when simulation stops (not after user drags)
+  const hasFittedRef = useRef(false);
+  useEffect(() => { hasFittedRef.current = false; }, [graph]);
+
+  const handleEngineStop = useCallback(() => {
+    if (hasFittedRef.current) return;
+    hasFittedRef.current = true;
+    const fg = fgRef.current;
+    if (fg) fg.zoomToFit(0, 40);
+  }, []);
 
   const adjacencyMap = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -367,10 +411,11 @@ const GraphPage = () => {
           ) : (
             <>
               <ForceGraph2D
+                ref={fgRef}
                 graphData={graph}
                 nodeColor={nodeColorFn}
                 nodeVal={(node: any) => Math.max(1, (node.degree || 0) + 1)}
-                nodeRelSize={5}
+                nodeRelSize={NODE_REL_SIZE}
                 nodeCanvasObject={nodeCanvasObject}
                 nodeCanvasObjectMode={() => "after"}
                 nodePointerAreaPaint={nodePointerAreaPaint}
@@ -379,7 +424,8 @@ const GraphPage = () => {
                 height={dimensions.height}
                 linkDirectionalArrowLength={4}
                 linkDirectionalArrowRelPos={1}
-                cooldownTicks={100}
+                cooldownTicks={300}
+                onEngineStop={handleEngineStop}
                 enableNodeDrag
                 enableZoomInteraction
                 enablePanInteraction

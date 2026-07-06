@@ -158,6 +158,26 @@ function resolveImport(
     }
   }
 
+  // Try package-name matching (Kotlin/Java/Python etc.)
+  // e.g. com.example.MyClass → com/example/MyClass.kt
+  const asPath = importPath.replace(/\./g, "/");
+  for (const ext of RESOLVE_EXTENSIONS) {
+    const withExt = asPath + ext;
+    const matches = [...knownFiles].filter(f => f.endsWith(withExt));
+    if (matches.length >= 1) {
+      return matches.sort((a, b) => a.length - b.length)[0];
+    }
+  }
+
+  // Try the path as-is (no extension) as a suffix
+  {
+    const matches = [...knownFiles].filter(f => f.endsWith(asPath));
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      return matches.sort((a, b) => a.length - b.length)[0];
+    }
+  }
+
   return null;
 }
 
