@@ -313,6 +313,10 @@ const BUILTIN_KEYWORDS = new Set([
   "print", "println", "printf", "console", "log", "error", "warn",
   "setTimeout", "setInterval", "clearTimeout", "clearInterval",
   "require", "module", "exports", "process", "window", "document",
+  "when", "with", "repeat", "synchronized", "assert", "check", "require",
+  "lazy", "scope", "apply", "also", "let", "run", "take", "drop",
+  "forEach", "map", "filter", "reduce", "fold", "groupBy", "sortedBy",
+  "forEach", "forEachIndexed", "mapIndexed", "filterIndexed",
 ]);
 
 function extractFunctionDefs(sourceCode: string, language: string): string[] {

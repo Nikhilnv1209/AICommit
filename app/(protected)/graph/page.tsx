@@ -10,6 +10,7 @@ import {
   FileCode, GitFork, Phone, Search, X, Loader2, Network,
 } from "lucide-react";
 import type { GraphType, GraphNode, GraphLink } from "@/lib/graph-extraction";
+import { precalculateLayout } from "@/lib/precalculate-layout";
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
@@ -94,47 +95,85 @@ const GraphPage = () => {
     return data.graph as { nodes: GraphNode[]; links: GraphLink[] };
   }, [data]);
 
-  // Configure force simulation when graph data changes
-  useEffect(() => {
-    if (graph.nodes.length === 0) return;
-
-    let cancelled = false;
-
-    const apply = () => {
-      if (cancelled) return;
-      const fg = fgRef.current;
-      if (!fg) {
-        setTimeout(apply, 100);
-        return;
-      }
-
-      const charge = fg.d3Force('charge');
-      if (charge) charge.strength(-400);
-
-      const link = fg.d3Force('link');
-      if (link) link.distance(80).strength(0.4);
-
-      const center = fg.d3Force('center');
-      if (center) center.strength(0);
-
-      fg.d3ReheatSimulation();
-    };
-
-    setTimeout(apply, 100);
-
-    return () => { cancelled = true; };
+  // Pre-calculate layout synchronously — no jitter when graph renders
+  const layout = useMemo(() => {
+    if (graph.nodes.length === 0) return null;
+    return precalculateLayout(graph.nodes, graph.links);
   }, [graph]);
 
-  // Fit view once when simulation stops (not after user drags)
-  const hasFittedRef = useRef(false);
-  useEffect(() => { hasFittedRef.current = false; }, [graph]);
+  // Apply pre-calculated positions to nodes
+  const graphWithPositions = useMemo(() => {
+    if (!layout) return graph;
+    return {
+      nodes: graph.nodes.map((n) => ({
+        ...n,
+        x: layout.positions.get(n.id)?.x,
+        y: layout.positions.get(n.id)?.y,
+      })),
+      links: graph.links,
+    };
+  }, [graph, layout]);
 
-  const handleEngineStop = useCallback(() => {
-    if (hasFittedRef.current) return;
-    hasFittedRef.current = true;
-    const fg = fgRef.current;
-    if (fg) fg.zoomToFit(0, 40);
-  }, []);
+  // Apply center/zoom immediately when ForceGraph2D mounts
+  useEffect(() => {
+    if (!layout) return;
+    const apply = () => {
+      const fg = fgRef.current;
+      if (!fg) {
+        setTimeout(apply, 50);
+        return;
+      }
+      // Calculate zoom from cluster bounding box + current dimensions
+      const nodes = graph.nodes
+        .map((n) => {
+          const p = layout.positions.get(n.id);
+          return p ? { x: p.x, y: p.y } : null;
+        })
+        .filter((p): p is { x: number; y: number } => p !== null);
+      if (nodes.length === 0) return;
+
+      const sample = nodes.slice(0, Math.min(nodes.length, 80));
+      const dists: number[] = [];
+      for (let i = 0; i < sample.length; i++) {
+        for (let j = i + 1; j < sample.length; j++) {
+          dists.push(Math.hypot(sample[i].x - sample[j].x, sample[i].y - sample[j].y));
+        }
+      }
+      const avgDist = dists.length > 0 ? dists.reduce((a, b) => a + b, 0) / dists.length : 100;
+
+      let best = nodes[0];
+      let bestCount = 0;
+      for (const p of nodes) {
+        let count = 0;
+        for (const q of nodes) {
+          if (Math.hypot(p.x - q.x, p.y - q.y) < avgDist) count++;
+        }
+        if (count > bestCount) {
+          bestCount = count;
+          best = p;
+        }
+      }
+
+      const cluster = nodes.filter((n) => Math.hypot(n.x - best.x, n.y - best.y) < avgDist);
+      const cx = cluster.reduce((s, n) => s + n.x, 0) / cluster.length;
+      const cy = cluster.reduce((s, n) => s + n.y, 0) / cluster.length;
+
+      const minX = Math.min(...cluster.map((n) => n.x));
+      const maxX = Math.max(...cluster.map((n) => n.x));
+      const minY = Math.min(...cluster.map((n) => n.y));
+      const maxY = Math.max(...cluster.map((n) => n.y));
+      const clusterW = Math.max(maxX - minX, 50);
+      const clusterH = Math.max(maxY - minY, 50);
+
+      const zoomX = (dimensions.width - 80) / clusterW;
+      const zoomY = (dimensions.height - 80) / clusterH;
+      const zoomLevel = Math.max(0.1, Math.min(zoomX, zoomY));
+
+      fg.centerAt(cx, cy, 0);
+      fg.zoom(zoomLevel, 0);
+    };
+    apply();
+  }, [layout, dimensions, graph]);
 
   const adjacencyMap = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -268,7 +307,7 @@ const GraphPage = () => {
   // doesn't repaint for all nodes). We attach a click listener to the canvas and do
   // coordinate-based hit detection using the d3-zoom transform.
   useEffect(() => {
-    if (graph.nodes.length === 0) return;
+    if (graphWithPositions.nodes.length === 0) return;
 
     let cleanup: (() => void) | null = null;
     let cancelled = false;
@@ -291,7 +330,7 @@ const GraphPage = () => {
         let nearest: GraphNode | null = null;
         let minDist = Infinity;
 
-        for (const node of graph.nodes) {
+        for (const node of graphWithPositions.nodes) {
           const n = node as any;
           if (n.x == null || n.y == null) continue;
           const dx = n.x - graphX;
@@ -312,7 +351,7 @@ const GraphPage = () => {
 
     requestAnimationFrame(findCanvas);
     return () => { cancelled = true; cleanup?.(); };
-  }, [graph.nodes]);
+  }, [graphWithPositions.nodes]);
 
   const selectedNodeNeighbors = useMemo(() => {
     if (!selectedNode) return [];
@@ -412,7 +451,7 @@ const GraphPage = () => {
             <>
               <ForceGraph2D
                 ref={fgRef}
-                graphData={graph}
+                graphData={graphWithPositions}
                 nodeColor={nodeColorFn}
                 nodeVal={(node: any) => Math.max(1, (node.degree || 0) + 1)}
                 nodeRelSize={NODE_REL_SIZE}
@@ -424,8 +463,7 @@ const GraphPage = () => {
                 height={dimensions.height}
                 linkDirectionalArrowLength={4}
                 linkDirectionalArrowRelPos={1}
-                cooldownTicks={300}
-                onEngineStop={handleEngineStop}
+                cooldownTicks={0}
                 enableNodeDrag
                 enableZoomInteraction
                 enablePanInteraction
