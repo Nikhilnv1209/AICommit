@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/sidebar";
 import useProject from "@/hooks/use-project";
 import { cn } from "@/lib/utils";
-import { Bot, CreditCard, LayoutDashboard, Plus, Presentation } from "lucide-react";
+import { Bot, CreditCard, LayoutDashboard, Plus, Presentation, Share2 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -31,6 +31,11 @@ const items = [
     title: "Q&A",
     url: "/qa",
     icon: Bot,
+  },
+  {
+    title: "Graph",
+    url: "/graph",
+    icon: Share2,
   },
   {
     title: "Meetings",

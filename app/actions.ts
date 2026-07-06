@@ -12,6 +12,7 @@ import { Readable, Transform } from "node:stream";
 import type { UploadApiResponse } from "cloudinary";
 import { getIndexingProgress as getProgress, resetIndexing } from "@/lib/indexing-progress";
 import { indexingManager } from "@/lib/indexing-manager";
+import { buildGraph, type GraphType } from "@/lib/graph-extraction";
 
 export async function askQuestion(question: string, projectId: string) {
   const stream = createStreamableValue();
@@ -770,6 +771,32 @@ export async function deleteConversation(conversationId: string) {
   } catch (error: any) {
     logError('DeleteConversation', 'Error:', error);
     return { success: false, error: error.message };
+  }
+}
+
+export async function getGraphData(projectId: string, graphType: GraphType) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const files = await prisma.sourceCodeEmbedding.findMany({
+      where: { projectId },
+      select: { fileName: true, sourceCode: true, summary: true },
+    });
+
+    if (files.length === 0) {
+      return { success: true, graph: { nodes: [], links: [] } };
+    }
+
+    const graph = buildGraph(
+      files.map(f => ({ fileName: f.fileName, sourceCode: f.sourceCode, summary: f.summary })),
+      graphType
+    );
+
+    return { success: true, graph };
+  } catch (error: any) {
+    logError('GetGraphData', 'Error:', error);
+    return { success: false, graph: { nodes: [], links: [] } };
   }
 }
 
