@@ -4,7 +4,10 @@ import { prisma } from "@/prisma/client";
 import { auth } from "@clerk/nextjs/server";
 import { pollCommits } from "@/lib/github";
 import { indexGithubRepo, countGithubRepoFiles } from "@/lib/github-loader";
-import { aiGenerateEmbeddings, getStreamProvider, streamAIChat, streamAIChatWithMessages } from './../lib/ai';
+import { aiGenerateEmbeddings, streamAIChat, streamAIChatWithMessages, isNotConfiguredError } from './../lib/ai';
+import { buildProvider, hasServerFallback, DEFAULT_BASE_URL } from "@/lib/ai-config";
+import { encrypt, decrypt, isEncryptionAvailable } from "@/lib/crypto";
+import { chargeCredits, refundCredits, shouldCharge, CREDIT_COSTS, InsufficientCreditsError } from "@/lib/credits";
 import { createStreamableValue } from "@ai-sdk/rsc";
 import { logError, logInfo } from '@/lib/logger';
 import cloudinary from "@/lib/cloudinary";
@@ -16,9 +19,26 @@ import { buildGraph, type GraphType } from "@/lib/graph-extraction";
 
 export async function askQuestion(question: string, projectId: string) {
   const stream = createStreamableValue();
-  const provider = getStreamProvider();
 
-  const queryVector = await aiGenerateEmbeddings(question);
+  const { userId } = await auth();
+  if (!userId) {
+    stream.error(new Error("User not found."));
+    stream.done();
+    return { output: stream.value, fileReference: [] as any };
+  }
+
+  let queryVector: number[];
+  try {
+    queryVector = await aiGenerateEmbeddings(userId, question);
+  } catch (error) {
+    if (isNotConfiguredError(error)) {
+      stream.error(new Error("AI not configured. Add your API key in Settings."));
+    } else {
+      stream.error(new Error("Failed to generate embeddings."));
+    }
+    stream.done();
+    return { output: stream.value, fileReference: [] as any };
+  }
   const VectorQuery = `[${queryVector.join(",")}]`;
 
   // Vector similarity search — find files whose summaries match the question
@@ -102,14 +122,39 @@ export async function askQuestion(question: string, projectId: string) {
   }
 
   (async () => {
+    // Charge a credit for the chat (only when on the server fallback;
+    // BYO keys are free). Refund automatically if the stream fails.
+    let chargeId: string | null = null;
     try {
-      for await (const chunk of streamAIChat(prompt)) {
+      if (await shouldCharge(userId, "CHAT")) {
+        const charge = await chargeCredits(userId, CREDIT_COSTS.CHAT, "CHAT", {
+          projectId,
+          description: `Q&A: ${question.slice(0, 60)}`,
+        });
+        chargeId = charge.id;
+      }
+    } catch (e: any) {
+      stream.error(e instanceof InsufficientCreditsError
+        ? e
+        : new Error("Could not start the request."));
+      stream.done();
+      return;
+    }
+
+    try {
+      for await (const chunk of streamAIChat(userId, prompt)) {
         stream.update(chunk);
       }
       stream.done();
     } catch (error) {
-      logError('AskQuestion', `Error streaming from ${provider.name}:`, error);
-      stream.error(new Error("Failed to generate response"));
+      logError('AskQuestion', `Error streaming response:`, error);
+      if (chargeId) await refundCredits(userId, chargeId, "AskQuestion stream failed");
+      if (isNotConfiguredError(error)) {
+        stream.error(new Error("AI not configured. Add your API key in Settings."));
+      } else {
+        stream.error(new Error("Failed to generate response"));
+      }
+      stream.done();
     }
   })();
 
@@ -216,18 +261,20 @@ export async function submitCreateForm(formdata: TFormData) {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
-    // Determine required credits (1 per file), then atomically deduct and create project
+    // Pre-check credits so users can't create a project they can't afford.
+    // The actual deduction happens on success inside the indexer (charge-on-
+    // success), so failed files are never billed. Free if BYO embedding keys.
     const fileCount = await countGithubRepoFiles(result.data.repoUrl, result.data.githubToken || undefined);
+    const indexingBillsCredits = await shouldCharge(userId, "EMBEDDING");
+    if (indexingBillsCredits) {
+      const creditsNeeded = fileCount * CREDIT_COSTS.INDEX;
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { credits: true } });
+      if (!user || user.credits < creditsNeeded) {
+        throw new Error(`Insufficient credits. Required: ${creditsNeeded}.`);
+      }
+    }
 
     const { project, remainingCredits } = await prisma.$transaction(async (tx) => {
-      const dec = await tx.user.updateMany({
-        where: { id: userId, credits: { gte: fileCount } },
-        data: { credits: { decrement: fileCount } },
-      });
-      if (dec.count === 0) {
-        throw new Error(`Insufficient credits. Required: ${fileCount}.`);
-      }
-
       const created = await tx.project.create({
         data: {
           name: result.data.projectName,
@@ -695,6 +742,200 @@ export async function getUserCredits() {
 }
 
 // ============================================================
+// AI CONFIGURATION
+// ============================================================
+
+export interface ProviderConfigView {
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean; // never return the key itself
+  /** Where this section's config would resolve from right now. */
+  source: "user" | "server" | "none";
+}
+
+export interface AIConfigView {
+  chat: ProviderConfigView;
+  embedding: ProviderConfigView;
+  encryptionEnabled: boolean;
+}
+
+function emptySection(source: ProviderConfigView["source"]): ProviderConfigView {
+  return { baseUrl: DEFAULT_BASE_URL, model: "", hasApiKey: false, source };
+}
+
+export async function getAIConfig(): Promise<{ success: boolean; config?: AIConfigView; error?: string }> {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const rows = await prisma.userAIConfig.findMany({ where: { userId } });
+    const byPurpose = new Map(rows.map(r => [r.purpose, r]));
+
+    const chat = byPurpose.get("CHAT");
+    const embedding = byPurpose.get("EMBEDDING");
+
+    return {
+      success: true,
+      config: {
+        chat: chat
+          ? { baseUrl: chat.baseUrl, model: chat.model, hasApiKey: true, source: "user" }
+          : emptySection(hasServerFallback("CHAT") ? "server" : "none"),
+        embedding: embedding
+          ? { baseUrl: embedding.baseUrl, model: embedding.model, hasApiKey: true, source: "user" }
+          : emptySection(hasServerFallback("EMBEDDING") ? "server" : "none"),
+        encryptionEnabled: isEncryptionAvailable(),
+      },
+    };
+  } catch (error: any) {
+    logError('GetAIConfig', 'Error fetching AI config:', error);
+    return { success: false, error: error.message || "Failed to fetch AI config." };
+  }
+}
+
+export async function saveAIConfigSection(input: {
+  purpose: "CHAT" | "EMBEDDING";
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    if (!isEncryptionAvailable()) {
+      return { success: false, error: "Server is missing AI_CONFIG_ENCRYPTION_KEY — cannot store API keys." };
+    }
+
+    const purpose = input.purpose;
+    const baseUrl = (input.baseUrl || "").trim() || DEFAULT_BASE_URL;
+    const model = (input.model || "").trim();
+
+    if (!model) {
+      return { success: false, error: `${purpose} model is required.` };
+    }
+
+    // If the user didn't re-enter their API key, keep the existing one.
+    let apiKeyEnc: string;
+    const existing = await prisma.userAIConfig.findUnique({
+      where: { userId_purpose: { userId, purpose } },
+    });
+    const apiKey = (input.apiKey || "").trim();
+    if (!apiKey) {
+      if (!existing) {
+        return { success: false, error: "API key is required." };
+      }
+      apiKeyEnc = existing.apiKeyEnc;
+    } else {
+      apiKeyEnc = encrypt(apiKey);
+    }
+
+    await prisma.userAIConfig.upsert({
+      where: { userId_purpose: { userId, purpose } },
+      update: { baseUrl, apiKeyEnc, model },
+      create: { userId, purpose, baseUrl, apiKeyEnc, model },
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    logError('SaveAIConfig', 'Error saving AI config:', error);
+    return { success: false, error: error.message || "Failed to save AI config." };
+  }
+}
+
+export async function deleteAIConfigSection(input: {
+  purpose: "CHAT" | "EMBEDDING";
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    await prisma.userAIConfig.deleteMany({
+      where: { userId, purpose: input.purpose },
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    logError('DeleteAIConfig', 'Error deleting AI config:', error);
+    return { success: false, error: error.message || "Failed to delete AI config." };
+  }
+}
+
+export async function testAIConfigSection(input: {
+  purpose: "CHAT" | "EMBEDDING";
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("User not found.");
+
+    const purpose = input.purpose;
+    const baseUrl = (input.baseUrl || "").trim() || DEFAULT_BASE_URL;
+    const model = (input.model || "").trim();
+    if (!model) {
+      return { success: false, error: `${purpose} model is required.` };
+    }
+
+    // If no API key supplied, reuse the stored (decrypted) key for the test.
+    let apiKey = (input.apiKey || "").trim();
+    if (!apiKey) {
+      const row = await prisma.userAIConfig.findUnique({
+        where: { userId_purpose: { userId, purpose } },
+      });
+      if (!row) return { success: false, error: "No API key to test." };
+      try {
+        apiKey = decrypt(row.apiKeyEnc);
+      } catch {
+        // Most likely the server's encryption key was rotated since the key
+        // was saved. Ask the user to re-enter it.
+        return {
+          success: false,
+          error: "Stored API key could not be decrypted (the server's encryption key may have changed). Please re-enter your API key and save again.",
+        };
+      }
+    }
+
+    const provider = buildProvider({ apiKey, baseUrl, model });
+
+    if (purpose === "CHAT") {
+      try {
+        await provider.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: "Reply with the single word: ok" }],
+          max_tokens: 16,
+        });
+      } catch (e: any) {
+        return { success: false, error: `Chat test failed: ${e?.message || e}` };
+      }
+    } else {
+      // EMBEDDING test — dimensions:1024 to match the vector column
+      try {
+        const response = await provider.embeddings.create({
+          model,
+          input: "test",
+          dimensions: 1024,
+        });
+        const dim = response.data[0]?.embedding?.length ?? 0;
+        if (dim !== 1024) {
+          return {
+            success: false,
+            error: `Embedding model returned ${dim} dimensions, but the database stores 1024. Choose a model that supports dimensions=1024.`,
+          };
+        }
+      } catch (e: any) {
+        return { success: false, error: `Embedding test failed: ${e?.message || e}` };
+      }
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    logError('TestAIConfig', 'Error testing AI config:', error);
+    return { success: false, error: error.message || "Failed to test AI config." };
+  }
+}
+
+// ============================================================
 // CONVERSATIONAL Q&A
 // ============================================================
 
@@ -839,10 +1080,10 @@ export async function getConversationMessages(conversationId: string) {
 async function buildAndStreamResponse(
   conversationId: string,
   content: string,
-  projectId: string
+  projectId: string,
+  userId: string
 ) {
   const stream = createStreamableValue();
-  const provider = getStreamProvider();
 
   try {
     // Fetch conversation history (last 20 messages to stay within token limits)
@@ -853,7 +1094,7 @@ async function buildAndStreamResponse(
     });
 
     // RAG retrieval for the latest user message (two-mode logic)
-    const queryVector = await aiGenerateEmbeddings(content);
+    const queryVector = await aiGenerateEmbeddings(userId, content);
     const VectorQuery = `[${queryVector.join(",")}]`;
 
     const result = await prisma.$queryRaw`
@@ -909,9 +1150,26 @@ ${contextBlock}`,
 
     // Stream the AI response and auto-save it
     (async () => {
+      // Charge a credit for the message (server fallback only; BYO keys free).
+      // Refund automatically if the stream fails.
+      let chargeId: string | null = null;
+      try {
+        if (await shouldCharge(userId, "CHAT")) {
+          const charge = await chargeCredits(userId, CREDIT_COSTS.CHAT, "CHAT", {
+            projectId,
+            description: `Chat: ${content.slice(0, 60)}`,
+          });
+          chargeId = charge.id;
+        }
+      } catch (e: any) {
+        stream.error(e instanceof InsufficientCreditsError ? e : new Error("Could not start the request."));
+        stream.done();
+        return;
+      }
+
       let fullResponse = "";
       try {
-        for await (const chunk of streamAIChatWithMessages(chatMessages as any)) {
+        for await (const chunk of streamAIChatWithMessages(userId, chatMessages as any)) {
           if (chunk.type === "thinking") {
             stream.update({ type: "thinking", content: chunk.content });
           } else {
@@ -938,8 +1196,14 @@ ${contextBlock}`,
 
         stream.done();
       } catch (error) {
-        logError('StreamResponse', `Error streaming from ${provider.name}:`, error);
-        stream.error(new Error("Failed to generate response"));
+        logError('StreamResponse', `Error streaming response:`, error);
+        if (chargeId) await refundCredits(userId, chargeId, "Conversation stream failed");
+        if (isNotConfiguredError(error)) {
+          stream.error(new Error("AI not configured. Add your API key in Settings."));
+        } else {
+          stream.error(new Error("Failed to generate response"));
+        }
+        stream.done();
       }
     })();
 
@@ -971,7 +1235,7 @@ export async function sendMessage(
       data: { title: content.slice(0, 50) },
     });
 
-    return await buildAndStreamResponse(conversationId, content, projectId);
+    return await buildAndStreamResponse(conversationId, content, projectId, userId);
   } catch (error: any) {
     logError('SendMessage', 'Error in sendMessage:', error);
     const stream = createStreamableValue();
@@ -1010,7 +1274,7 @@ export async function editMessage(
       data: { conversationId, role: "user", content: newContent },
     });
 
-    return await buildAndStreamResponse(conversationId, newContent, projectId);
+    return await buildAndStreamResponse(conversationId, newContent, projectId, userId);
   } catch (error: any) {
     logError('EditMessage', 'Error in editMessage:', error);
     const stream = createStreamableValue();

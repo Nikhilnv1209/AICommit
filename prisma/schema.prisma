@@ -30,6 +30,31 @@ model User {
   userToProject     UserToProject[]
   questionsAsked    Question[]
   stripeTransactions StripeTransaction[]
+  creditTransactions CreditTransaction[]
+  aiConfigs         UserAIConfig[]
+}
+
+/// Which pipeline stage a config row powers.
+enum ConfigPurpose {
+  CHAT
+  EMBEDDING
+}
+
+// Per-user AI configuration for any OpenAI-compatible endpoint.
+// A user has up to two rows: one for CHAT (Q&A, summaries) and one for EMBEDDING.
+// They can point at completely different providers/endpoints/keys.
+// `apiKeyEnc` stores the API key AES-256-GCM encrypted with AI_CONFIG_ENCRYPTION_KEY.
+model UserAIConfig {
+  userId     String
+  purpose    ConfigPurpose
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  baseUrl    String         @default("https://api.openai.com/v1")
+  apiKeyEnc  String
+  model      String
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@id([userId, purpose])
 }
 
 model Project {
@@ -201,4 +226,42 @@ model StripeTransaction {
   userId  String
   user    User   @relation(fields: [userId], references: [id])
   credits Int
+}
+
+/// What kind of operation produced a credit movement.
+enum CreditTxType {
+  PURCHASE       // Stripe purchase (positive)
+  INDEX          // Initial project indexing (negative)
+  REINDEX        // Re-indexing of new/changed files (negative)
+  COMMIT_SUMMARY // Summarizing a polled commit (negative)
+  CHAT           // Q&A / conversation message (negative)
+  REFUND         // Reversal of a prior charge, e.g. on AI failure (positive)
+}
+
+/// Append-only ledger of every credit movement. The running balance lives on
+/// User.credits for fast reads; this table is the auditable source of truth
+/// and powers refunds (each REFUND references the original charge via refId).
+model CreditTransaction {
+  id           String       @id @default(cuid())
+  createdAt    DateTime     @default(now())
+
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Signed amount: negative = spend, positive = credit/refund/purchase.
+  amount       Int
+  type         CreditTxType
+
+  /// Optional context: which project / action this relates to.
+  projectId    String?
+  description  String?
+
+  /// For REFUND rows, the id of the original charge being reversed.
+  refId        String?
+
+  /// Snapshot of the balance immediately after this movement (for audit).
+  balanceAfter Int
+
+  @@index([userId, createdAt])
+  @@index([refId])
 }
