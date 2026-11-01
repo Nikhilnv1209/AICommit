@@ -1029,7 +1029,7 @@ export async function getGraphData(projectId: string, graphType: GraphType) {
       return { success: true, graph: { nodes: [], links: [] } };
     }
 
-    const graph = buildGraph(
+    const graph = await buildGraph(
       files.map(f => ({ fileName: f.fileName, sourceCode: f.sourceCode, summary: f.summary })),
       graphType
     );

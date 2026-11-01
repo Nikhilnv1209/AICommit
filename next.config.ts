@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   allowedDevOrigins: ["192.168.29.241"],
+  serverExternalPackages: ["web-tree-sitter", "tree-sitter-wasms"],
   images: {
     remotePatterns: [
       { hostname: "raw.githubusercontent.com" },

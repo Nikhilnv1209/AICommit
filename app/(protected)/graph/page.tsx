@@ -7,7 +7,7 @@ import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  FileCode, GitFork, Phone, Search, X, Loader2, Network,
+  FileCode, Phone, Search, X, Loader2, Network,
 } from "lucide-react";
 import type { GraphType, GraphNode, GraphLink } from "@/lib/graph-extraction";
 import { precalculateLayout } from "@/lib/precalculate-layout";
@@ -45,7 +45,6 @@ const LANGUAGE_COLORS: Record<string, string> = {
 const GRAPH_TYPES: { id: GraphType; label: string; icon: typeof FileCode }[] = [
   { id: "files", label: "File Dependencies", icon: FileCode },
   { id: "calls", label: "Call Graph", icon: Phone },
-  { id: "classes", label: "Class Hierarchy", icon: GitFork },
 ];
 
 const NODE_REL_SIZE = 6;
@@ -194,11 +193,6 @@ const GraphPage = () => {
     return Object.entries(LANGUAGE_COLORS).filter(([lang]) => langs.has(lang));
   }, [graph.nodes]);
 
-  const hasImplementsLinks = useMemo(
-    () => graph.links.some(l => l.type === "implements"),
-    [graph.links]
-  );
-
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     if (!query.trim()) { setHighlightNodes(null); return; }
@@ -293,13 +287,10 @@ const GraphPage = () => {
     ctx.strokeStyle = themeRef.current === "dark" ? "#555" : "#aaa";
     ctx.lineWidth = 1 / globalScale;
 
-    if (link.type === "implements") ctx.setLineDash([4 / globalScale, 4 / globalScale]);
-
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
     ctx.lineTo(target.x, target.y);
     ctx.stroke();
-    ctx.setLineDash([]);
     ctx.globalAlpha = 1;
   }, []);
 
@@ -442,9 +433,7 @@ const GraphPage = () => {
                 <Network className="size-5 text-muted-foreground" />
               </div>
               <p className="font-mono text-sm text-muted-foreground">
-                {graphType === "classes"
-                  ? "no classes found in this codebase"
-                  : "no code files found — index the project first"}
+                no code files found — index the project first
               </p>
             </div>
           ) : (
@@ -477,12 +466,10 @@ const GraphPage = () => {
                     <span className="font-mono text-[10px] text-muted-foreground">{lang}</span>
                   </div>
                 ))}
-                {hasImplementsLinks && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block w-4 border-t border-dashed border-muted-foreground" />
-                    <span className="font-mono text-[10px] text-muted-foreground">implements</span>
-                  </div>
-                )}
+              </div>
+              {/* Supported languages disclaimer */}
+              <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-border bg-background/80 px-2.5 py-1 font-mono text-[10px] text-muted-foreground/60 backdrop-blur">
+                AST parsing: TS · JS · Kotlin · Java · Python · Go · Rust · Ruby · PHP
               </div>
               {/* Node count */}
               <div className="pointer-events-none absolute right-3 top-3 rounded-md border border-border bg-background/80 px-2.5 py-1 font-mono text-[10px] text-muted-foreground backdrop-blur">
