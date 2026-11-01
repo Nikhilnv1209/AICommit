@@ -39,7 +39,7 @@ type ParsedFile = {
 
 const LANGUAGE_MAP: Record<string, string> = {
   ".ts": "typescript",
-  ".tsx": "typescript",
+  ".tsx": "tsx",
   ".js": "javascript",
   ".jsx": "javascript",
   ".mjs": "javascript",

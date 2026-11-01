@@ -1,52 +1,150 @@
 // @ts-nocheck
-import { Parser, Language } from "web-tree-sitter";
+import * as ParserModule from "web-tree-sitter";
 import path from "path";
 import fs from "fs";
 import { createRequire } from "module";
+import { logError } from "./logger";
 
 const require = createRequire(import.meta.url);
 
-let initialized = false;
-const languageCache = new Map<string, any>();
+// web-tree-sitter 0.20.x is CommonJS and exports the Parser constructor
+// directly, but bundler interop can wrap it as { default: Parser } or
+// { Parser }. Resolve it at call time and cache it on globalThis so a
+// Fast Refresh / hot reload doesn't re-initialize the WASM runtime or lose
+// the constructor's static Language property.
+const parserGlobal = globalThis as typeof globalThis & {
+  __astParserCtor?: any;
+  __astParserReady?: boolean;
+  __astParserPromise?: Promise<void> | null;
+  __astLanguageCache?: Map<string, any>;
+};
+
+function loadPatchedParserCtor(): any {
+  const filename = require.resolve("web-tree-sitter/tree-sitter.js");
+  const source = fs.readFileSync(filename, "utf8");
+
+  // Emscripten's preamble does `module.exports = Module` when Parser.init()
+  // runs, which destroys the package's real export (the Parser constructor).
+  // Remove that assignment, then evaluate the source ourselves so the final
+  // `module.exports = TreeSitter` wins.
+  const patched = source.replace(/module\.exports\s*=\s*Module/g, "void 0");
+  if (patched === source) {
+    throw new Error("web-tree-sitter source no longer contains module.exports=Module");
+  }
+
+  const mod: any = { exports: {} };
+  const factory = new Function(
+    "module",
+    "exports",
+    "require",
+    "__dirname",
+    "__filename",
+    patched
+  );
+  factory(mod, mod.exports, require, path.dirname(filename), filename);
+  return mod.exports;
+}
+
+function resolveParserCtor(): any {
+  if (typeof parserGlobal.__astParserCtor?.init === "function") {
+    return parserGlobal.__astParserCtor;
+  }
+  parserGlobal.__astParserCtor = undefined;
+
+  const candidates = [
+    ParserModule?.default,
+    ParserModule,
+    ParserModule?.default?.default,
+    ParserModule?.default?.Parser,
+    ParserModule?.Parser,
+  ];
+  let ctor = candidates.find((candidate) => typeof candidate?.init === "function");
+
+  // On a hot reload after Parser.init() has run, the package's module.exports
+  // has already been replaced by Emscripten's Module object. Load a patched
+  // copy of the source to recover the actual constructor.
+  if (!ctor) {
+    try {
+      ctor = loadPatchedParserCtor();
+    } catch (error) {
+      logError("ASTParser", "Failed to load patched web-tree-sitter", error);
+    }
+  }
+
+  if (!ctor) {
+    console.error("[ASTParser] Unexpected web-tree-sitter module shape", {
+      moduleType: typeof ParserModule,
+      keys: Object.keys(ParserModule || {}),
+      defaultType: typeof ParserModule?.default,
+      parserType: typeof ParserModule?.Parser,
+    });
+    return null;
+  }
+
+  parserGlobal.__astParserCtor = ctor;
+  return ctor;
+}
+
+const languageCache = (parserGlobal.__astLanguageCache ??= new Map<string, any>());
 
 const WASM_DIR = path.join(
   path.dirname(require.resolve("tree-sitter-wasms/package.json")),
   "out"
 );
 
-const PARSER_WASM = require.resolve("web-tree-sitter/web-tree-sitter.wasm");
+const PARSER_WASM = require.resolve("web-tree-sitter/tree-sitter.wasm");
 
 const LANGUAGE_WASM: Record<string, string> = {
   typescript: "tree-sitter-typescript.wasm",
+  tsx: "tree-sitter-tsx.wasm",
   javascript: "tree-sitter-javascript.wasm",
   kotlin: "tree-sitter-kotlin.wasm",
   java: "tree-sitter-java.wasm",
   python: "tree-sitter-python.wasm",
   go: "tree-sitter-go.wasm",
   rust: "tree-sitter-rust.wasm",
-  ruby: "tree-sitter-ruby.wasm",
   php: "tree-sitter-php.wasm",
 };
 
 export const SUPPORTED_LANGUAGES = new Set(Object.keys(LANGUAGE_WASM));
 
 async function ensureInitialized() {
-  if (!initialized) {
-    await Parser.init({
-      locateFile: () => PARSER_WASM,
-    });
-    initialized = true;
+  if (
+    parserGlobal.__astParserReady &&
+    typeof parserGlobal.__astParserCtor?.init === "function"
+  ) {
+    return;
   }
+  if (!parserGlobal.__astParserPromise) {
+    const ctor = resolveParserCtor();
+    if (!ctor) throw new Error("web-tree-sitter Parser constructor unavailable");
+
+    parserGlobal.__astParserPromise = Promise.resolve()
+      .then(() => ctor.init({ locateFile: () => PARSER_WASM }))
+      .then(() => {
+        parserGlobal.__astParserReady = true;
+      })
+      .catch((error) => {
+        parserGlobal.__astParserPromise = null;
+        parserGlobal.__astParserReady = false;
+        throw error;
+      });
+  }
+  await parserGlobal.__astParserPromise;
 }
 
 async function getLanguage(language: string): Promise<any | null> {
-  if (languageCache.has(language)) return languageCache.get(language);
   await ensureInitialized();
+  if (languageCache.has(language)) return languageCache.get(language);
   const wasmFile = LANGUAGE_WASM[language];
   if (!wasmFile) return null;
   const wasmPath = path.join(WASM_DIR, wasmFile);
-  const wasmBuffer = fs.readFileSync(wasmPath);
-  const lang = await Language.load(wasmBuffer);
+  const ctor = resolveParserCtor();
+  const LanguageCtor = ctor?.Language ?? ParserModule?.Language ?? ParserModule?.default?.Language;
+  if (typeof LanguageCtor?.load !== "function") {
+    throw new Error("web-tree-sitter Language.load is unavailable");
+  }
+  const lang = await LanguageCtor.load(wasmPath);
   languageCache.set(language, lang);
   return lang;
 }
@@ -104,10 +202,18 @@ function cleanName(text: string): string {
 
 function getCallName(funcNode: any): string | null {
   if (!funcNode) return null;
-  if (funcNode.type === "identifier") return funcNode.text;
+  if (funcNode.type === "identifier" || funcNode.type === "simple_identifier") return funcNode.text;
   if (funcNode.type === "member_expression" || funcNode.type === "field_expression") {
     const prop = funcNode.childForFieldName("property");
     if (prop) return prop.text;
+  }
+  if (funcNode.type === "navigation_expression") {
+    const suffix = funcNode.namedChildren.find((c: any) => c.type === "navigation_suffix");
+    if (suffix) return suffix.text.replace(/^\./, "");
+  }
+  if (funcNode.type === "selector_expression") {
+    const field = funcNode.childForFieldName("field") || funcNode.namedChildren[funcNode.namedChildren.length - 1];
+    if (field) return field.text;
   }
   return funcNode.text;
 }
@@ -170,23 +276,27 @@ function extractKotlin(root: any): ExtractionResult {
   const functionCalls: string[] = [];
 
   const nodes = collectNodes(root, new Set([
-    "import_statement", "function_declaration", "call_expression",
+    "import_header", "function_declaration", "call_expression",
   ]));
 
   for (const node of nodes) {
     switch (node.type) {
-      case "import_statement": {
-        const text = node.text.replace(/^import\s+/, "").trim();
-        imports.push(text);
+      case "import_header": {
+        const text = node.text
+          .replace(/^import\s+/, "")
+          .replace(/\s+as\s+\w+$/, "")
+          .replace(/\.\*$/, "")
+          .trim();
+        if (text) imports.push(text);
         break;
       }
       case "function_declaration": {
-        const name = node.childForFieldName("name");
+        const name = node.childForFieldName("name") || node.namedChildren[0];
         if (name) functionDefs.push(name.text);
         break;
       }
       case "call_expression": {
-        const func = node.childForFieldName("function");
+        const func = node.childForFieldName("function") || node.namedChildren[0];
         const name = getCallName(func);
         if (name && !BUILTIN_KEYWORDS.has(name) && name.length > 1) {
           functionCalls.push(name);
@@ -216,8 +326,12 @@ function extractJava(root: any): ExtractionResult {
   for (const node of nodes) {
     switch (node.type) {
       case "import_declaration": {
-        const name = node.childForFieldName("name");
-        if (name) imports.push(name.text);
+        const text = node.text
+          .replace(/^import\s+(static\s+)?/, "")
+          .replace(/;$/, "")
+          .replace(/\.\*$/, "")
+          .trim();
+        if (text) imports.push(text);
         break;
       }
       case "method_declaration":
@@ -455,21 +569,27 @@ export async function extractFromSource(
   sourceCode: string,
   language: string
 ): Promise<ExtractionResult> {
+  let parser: any = null;
+  let tree: any = null;
+
   try {
     const lang = await getLanguage(language);
     if (!lang) return { imports: [], functionDefs: [], functionCalls: [] };
 
-    const parser = new Parser();
+    const ParserCtor = parserGlobal.__astParserCtor ?? resolveParserCtor();
+    if (typeof ParserCtor !== "function") {
+      throw new Error("web-tree-sitter Parser constructor unavailable");
+    }
+    parser = new ParserCtor();
     parser.setLanguage(lang);
-    const tree = parser.parse(sourceCode);
+    tree = parser.parse(sourceCode);
     if (!tree) return { imports: [], functionDefs: [], functionCalls: [] };
 
     const root = tree.rootNode;
-    tree.delete();
-    parser.delete();
 
     switch (language) {
       case "typescript":
+      case "tsx":
       case "javascript":
         return extractTypeScript(root);
       case "kotlin":
@@ -489,7 +609,11 @@ export async function extractFromSource(
       default:
         return { imports: [], functionDefs: [], functionCalls: [] };
     }
-  } catch {
+  } catch (error) {
+    logError("ASTParser", `Failed to parse ${language} source`, error);
     return { imports: [], functionDefs: [], functionCalls: [] };
+  } finally {
+    if (tree) tree.delete();
+    if (parser) parser.delete();
   }
 }
