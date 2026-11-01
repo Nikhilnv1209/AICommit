@@ -7,7 +7,7 @@ import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  FileCode, Phone, Search, X, Loader2, Network,
+  FileCode, Phone, Search, X, Loader2, Network, Tags,
 } from "lucide-react";
 import type { GraphType, GraphNode, GraphLink } from "@/lib/graph-extraction";
 import { precalculateLayout } from "@/lib/precalculate-layout";
@@ -23,6 +23,7 @@ const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
 
 const LANGUAGE_COLORS: Record<string, string> = {
   typescript: "#3178c6",
+  tsx: "#3178c6",
   javascript: "#f7df1e",
   python: "#3776ab",
   kotlin: "#7f52ff",
@@ -50,6 +51,9 @@ const GRAPH_TYPES: { id: GraphType; label: string; icon: typeof FileCode }[] = [
 const NODE_REL_SIZE = 6;
 const getNodeRadius = (degree: number) => Math.sqrt(Math.max(1, degree + 1)) * NODE_REL_SIZE;
 
+type LabelMode = "auto" | "all" | "hover";
+type LabelRect = { left: number; top: number; right: number; bottom: number };
+
 const GraphPage = () => {
   const { projectId } = useProject();
   const { resolvedTheme } = useTheme();
@@ -58,6 +62,7 @@ const GraphPage = () => {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightNodes, setHighlightNodes] = useState<Set<string> | null>(null);
+  const [labelMode, setLabelMode] = useState<LabelMode>("auto");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fgRef = useRef<any>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -94,84 +99,75 @@ const GraphPage = () => {
     return data.graph as { nodes: GraphNode[]; links: GraphLink[] };
   }, [data]);
 
-  // Pre-calculate layout synchronously — no jitter when graph renders
+  // Pre-calculate layout synchronously — no jitter when graph renders.
+  // Normalize endpoints first: ForceGraph may have mutated cached links into
+  // node objects, and d3-force needs the current graph's node ids.
   const layout = useMemo(() => {
     if (graph.nodes.length === 0) return null;
-    return precalculateLayout(graph.nodes, graph.links);
+    const links = graph.links.map((l) => ({
+      source: typeof l.source === "string" ? l.source : (l.source as any).id,
+      target: typeof l.target === "string" ? l.target : (l.target as any).id,
+    }));
+    return precalculateLayout(graph.nodes, links);
   }, [graph]);
 
-  // Apply pre-calculated positions to nodes
+  // Apply pre-calculated positions to nodes.
+  // Copy links too: ForceGraph mutates link.source/link.target into node
+  // objects, and we must never let it mutate React Query's cached graph data.
   const graphWithPositions = useMemo(() => {
     if (!layout) return graph;
     return {
-      nodes: graph.nodes.map((n) => ({
-        ...n,
-        x: layout.positions.get(n.id)?.x,
-        y: layout.positions.get(n.id)?.y,
+      nodes: graph.nodes
+        .map((n) => ({
+          ...n,
+          x: layout.positions.get(n.id)?.x,
+          y: layout.positions.get(n.id)?.y,
+        }))
+        // Highest-degree first: labels are drawn in this order, so the most
+        // important nodes win the collision checks.
+        .sort((a, b) => (b.degree || 0) - (a.degree || 0)),
+      links: graph.links.map((l) => ({
+        ...l,
+        source: typeof l.source === "string" ? l.source : (l.source as any).id,
+        target: typeof l.target === "string" ? l.target : (l.target as any).id,
       })),
-      links: graph.links,
     };
   }, [graph, layout]);
 
-  // Apply center/zoom immediately when ForceGraph2D mounts
+  // Fit the whole graph in view once ForceGraph2D mounts
   useEffect(() => {
     if (!layout) return;
+    let cancelled = false;
+
     const apply = () => {
+      if (cancelled) return;
       const fg = fgRef.current;
       if (!fg) {
         setTimeout(apply, 50);
         return;
       }
-      // Calculate zoom from cluster bounding box + current dimensions
+
       const nodes = graph.nodes
-        .map((n) => {
-          const p = layout.positions.get(n.id);
-          return p ? { x: p.x, y: p.y } : null;
-        })
-        .filter((p): p is { x: number; y: number } => p !== null);
+        .map((n) => layout.positions.get(n.id))
+        .filter((p): p is { x: number; y: number } => p !== undefined);
       if (nodes.length === 0) return;
 
-      const sample = nodes.slice(0, Math.min(nodes.length, 80));
-      const dists: number[] = [];
-      for (let i = 0; i < sample.length; i++) {
-        for (let j = i + 1; j < sample.length; j++) {
-          dists.push(Math.hypot(sample[i].x - sample[j].x, sample[i].y - sample[j].y));
-        }
-      }
-      const avgDist = dists.length > 0 ? dists.reduce((a, b) => a + b, 0) / dists.length : 100;
+      const minX = Math.min(...nodes.map((p) => p.x));
+      const maxX = Math.max(...nodes.map((p) => p.x));
+      const minY = Math.min(...nodes.map((p) => p.y));
+      const maxY = Math.max(...nodes.map((p) => p.y));
+      const padding = 80;
 
-      let best = nodes[0];
-      let bestCount = 0;
-      for (const p of nodes) {
-        let count = 0;
-        for (const q of nodes) {
-          if (Math.hypot(p.x - q.x, p.y - q.y) < avgDist) count++;
-        }
-        if (count > bestCount) {
-          bestCount = count;
-          best = p;
-        }
-      }
+      const zoomX = (dimensions.width - padding) / Math.max(maxX - minX, 50);
+      const zoomY = (dimensions.height - padding) / Math.max(maxY - minY, 50);
+      const zoomLevel = Math.max(0.05, Math.min(1.5, zoomX, zoomY));
 
-      const cluster = nodes.filter((n) => Math.hypot(n.x - best.x, n.y - best.y) < avgDist);
-      const cx = cluster.reduce((s, n) => s + n.x, 0) / cluster.length;
-      const cy = cluster.reduce((s, n) => s + n.y, 0) / cluster.length;
-
-      const minX = Math.min(...cluster.map((n) => n.x));
-      const maxX = Math.max(...cluster.map((n) => n.x));
-      const minY = Math.min(...cluster.map((n) => n.y));
-      const maxY = Math.max(...cluster.map((n) => n.y));
-      const clusterW = Math.max(maxX - minX, 50);
-      const clusterH = Math.max(maxY - minY, 50);
-
-      const zoomX = (dimensions.width - 80) / clusterW;
-      const zoomY = (dimensions.height - 80) / clusterH;
-      const zoomLevel = Math.max(0.1, Math.min(zoomX, zoomY));
-
-      fg.centerAt(cx, cy, 0);
+      fg.centerAt((minX + maxX) / 2, (minY + maxY) / 2, 0);
       fg.zoom(zoomLevel, 0);
     };
+
     apply();
+    return () => { cancelled = true; };
   }, [layout, dimensions, graph]);
 
   const adjacencyMap = useMemo(() => {
@@ -186,6 +182,14 @@ const GraphPage = () => {
     }
     return map;
   }, [graph]);
+
+  // Resolve link endpoints by id. ForceGraph normally replaces string ids with
+  // node objects, but with cooldownTicks=0 that isn't guaranteed before the
+  // first paint, so the custom link renderer needs its own lookup.
+  const nodeById = useMemo(
+    () => new Map(graphWithPositions.nodes.map((n) => [n.id, n])),
+    [graphWithPositions.nodes]
+  );
 
   const presentLanguages = useMemo(() => {
     const langs = new Set<string>();
@@ -211,22 +215,39 @@ const GraphPage = () => {
   const highlightNodesRef = useRef<Set<string> | null>(null);
   const selectedNodeRef = useRef<GraphNode | null>(null);
   const themeRef = useRef<string | undefined>(undefined);
+  const hoveredNodeRef = useRef<GraphNode | null>(null);
+  const hoveredNeighborhoodRef = useRef<Set<string> | null>(null);
+  const labelRectsRef = useRef<LabelRect[]>([]);
+  const labelModeRef = useRef<LabelMode>("auto");
 
   useEffect(() => { highlightNodesRef.current = highlightNodes; }, [highlightNodes]);
   useEffect(() => { selectedNodeRef.current = selectedNode; }, [selectedNode]);
   useEffect(() => { themeRef.current = resolvedTheme; }, [resolvedTheme]);
+  useEffect(() => { labelModeRef.current = labelMode; }, [labelMode]);
+
+  const handleRenderFramePre = useCallback(() => {
+    labelRectsRef.current = [];
+  }, []);
 
   const nodeColorFn = useCallback((node: any) => {
     const color = LANGUAGE_COLORS[node.group] || LANGUAGE_COLORS.unknown;
     const hn = highlightNodesRef.current;
-    const isHighlighted = !hn || hn.has(node.id);
+    const hovered = hoveredNodeRef.current;
+    const hoveredNeighborhood = hoveredNeighborhoodRef.current;
+    const isHighlighted =
+      (!hn || hn.has(node.id)) &&
+      (!hovered || !hoveredNeighborhood || hoveredNeighborhood.has(node.id));
     return isHighlighted ? color : color + "33";
   }, []);
 
   const nodeCanvasObject = useCallback((node: any, ctx: any, globalScale: number) => {
     const nodeRadius = getNodeRadius(node.degree || 0);
     const hn = highlightNodesRef.current;
-    const isHighlighted = !hn || hn.has(node.id);
+    const hovered = hoveredNodeRef.current;
+    const hoveredNeighborhood = hoveredNeighborhoodRef.current;
+    const isHighlighted =
+      (!hn || hn.has(node.id)) &&
+      (!hovered || !hoveredNeighborhood || hoveredNeighborhood.has(node.id));
 
     // Selected node border
     const sn = selectedNodeRef.current;
@@ -239,10 +260,32 @@ const GraphPage = () => {
       ctx.stroke();
     }
 
-    // Draw label with background pill for readability
-    if (!node.label) return;
+    // Subtle ring so unlabeled nodes still read as deliberate nodes
+    ctx.globalAlpha = isHighlighted ? 0.9 : 0.2;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI);
+    ctx.strokeStyle =
+      themeRef.current === "dark" ? "rgba(255,255,255,0.28)" : "rgba(0,0,0,0.16)";
+    ctx.lineWidth = 1.5 / globalScale;
+    ctx.stroke();
 
-    ctx.globalAlpha = isHighlighted ? 1 : 0.5;
+    if (!node.label) {
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    const isForced =
+      sn?.id === node.id ||
+      (hoveredNeighborhood?.has(node.id) ?? false) ||
+      (hn?.has(node.id) ?? false);
+
+    const mode = labelModeRef.current;
+    if (mode === "hover" && !isForced) {
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    ctx.globalAlpha = isHighlighted ? 1 : 0.25;
     const fontSize = Math.max(9, 13 / globalScale);
     ctx.font = `${fontSize}px ui-monospace, monospace`;
     ctx.textAlign = "center";
@@ -255,13 +298,33 @@ const GraphPage = () => {
     const padX = 4 / globalScale;
     const padY = 2 / globalScale;
 
+    const rect: LabelRect = {
+      left: node.x - textWidth / 2 - padX,
+      top: labelY - fontSize / 2 - padY,
+      right: node.x + textWidth / 2 + padX,
+      bottom: labelY + fontSize / 2 + padY,
+    };
+
+    // Auto mode: draw as many non-overlapping labels as fit, highest-degree first
+    if (mode === "auto" && !isForced) {
+      const gap = 3 / globalScale;
+      const overlaps = labelRectsRef.current.some(
+        (r) =>
+          rect.left - gap < r.right &&
+          rect.right + gap > r.left &&
+          rect.top - gap < r.bottom &&
+          rect.bottom + gap > r.top
+      );
+      if (overlaps) {
+        ctx.globalAlpha = 1;
+        return;
+      }
+    }
+
+    labelRectsRef.current.push(rect);
+
     ctx.fillStyle = isDark ? "rgba(10,10,11,0.9)" : "rgba(255,255,255,0.9)";
-    ctx.fillRect(
-      node.x - textWidth / 2 - padX,
-      labelY - fontSize / 2 - padY,
-      textWidth + padX * 2,
-      fontSize + padY * 2
-    );
+    ctx.fillRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
 
     ctx.fillStyle = isDark ? "#e5e5e5" : "#1a1a1a";
     ctx.fillText(label, node.x, labelY);
@@ -278,31 +341,55 @@ const GraphPage = () => {
   }, []);
 
   const linkCanvasObject = useCallback((link: any, ctx: any, globalScale: number) => {
-    const source = typeof link.source === "object" ? link.source : { x: 0, y: 0 };
-    const target = typeof link.target === "object" ? link.target : { x: 0, y: 0 };
+    const sourceId = typeof link.source === "object" ? link.source.id : link.source;
+    const targetId = typeof link.target === "object" ? link.target.id : link.target;
+    const source =
+      typeof link.source === "object" ? link.source : nodeById.get(sourceId) || { x: 0, y: 0 };
+    const target =
+      typeof link.target === "object" ? link.target : nodeById.get(targetId) || { x: 0, y: 0 };
     const hn = highlightNodesRef.current;
-    const isHighlighted = !hn || (hn.has(source.id) && hn.has(target.id));
+    const hovered = hoveredNodeRef.current;
+    const hoveredNeighborhood = hoveredNeighborhoodRef.current;
 
-    ctx.globalAlpha = isHighlighted ? 0.6 : 0.05;
-    ctx.strokeStyle = themeRef.current === "dark" ? "#555" : "#aaa";
-    ctx.lineWidth = 1 / globalScale;
+    const isHoverEdge =
+      !!hovered && (sourceId === hovered.id || targetId === hovered.id);
+    const isHoverNeighborEdge =
+      !!hovered &&
+      !!hoveredNeighborhood &&
+      hoveredNeighborhood.has(sourceId) &&
+      hoveredNeighborhood.has(targetId);
+    const isSearchHighlighted = !hn || (hn.has(sourceId) && hn.has(targetId));
+
+    let alpha: number;
+    if (hovered) {
+      alpha = isHoverEdge ? 0.9 : isHoverNeighborEdge ? 0.25 : 0.03;
+    } else {
+      alpha = isSearchHighlighted ? 0.5 : 0.08;
+    }
+
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = isHoverEdge
+      ? themeRef.current === "dark" ? "#9ca3af" : "#6b7280"
+      : themeRef.current === "dark" ? "#555" : "#aaa";
+    ctx.lineWidth = (isHoverEdge ? 2 : 1) / globalScale;
 
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
     ctx.lineTo(target.x, target.y);
     ctx.stroke();
     ctx.globalAlpha = 1;
-  }, []);
+  }, [nodeById]);
 
-  // Manual click detection — library's shadow canvas is unreliable (800ms throttle,
-  // doesn't repaint for all nodes). We attach a click listener to the canvas and do
-  // coordinate-based hit detection using the d3-zoom transform.
+  // Manual pointer detection — the library's shadow canvas is unreliable after
+  // zoom/pan (it throttles and doesn't always repaint), so clicks and hover both
+  // use the d3-zoom transform plus coordinate-based hit detection.
   useEffect(() => {
     if (graphWithPositions.nodes.length === 0) return;
 
     let cleanup: (() => void) | null = null;
     let cancelled = false;
     let retries = 0;
+    let hoverRaf = 0;
 
     const findCanvas = () => {
       if (cancelled) return;
@@ -312,12 +399,16 @@ const GraphPage = () => {
         return;
       }
 
-      const handleClick = (e: MouseEvent) => {
+      const toGraphCoords = (clientX: number, clientY: number) => {
         const rect = canvas.getBoundingClientRect();
         const transform = (canvas as any).__zoom || { x: 0, y: 0, k: 1 };
-        const graphX = (e.clientX - rect.left - transform.x) / transform.k;
-        const graphY = (e.clientY - rect.top - transform.y) / transform.k;
+        return {
+          x: (clientX - rect.left - transform.x) / transform.k,
+          y: (clientY - rect.top - transform.y) / transform.k,
+        };
+      };
 
+      const findNearestNode = (graphX: number, graphY: number): GraphNode | null => {
         let nearest: GraphNode | null = null;
         let minDist = Infinity;
 
@@ -333,16 +424,65 @@ const GraphPage = () => {
           }
         }
 
-        setSelectedNode(nearest);
+        return nearest;
+      };
+
+      const updateHover = (clientX: number, clientY: number) => {
+        const { x, y } = toGraphCoords(clientX, clientY);
+        const nearest = findNearestNode(x, y);
+        if ((nearest?.id ?? null) === (hoveredNodeRef.current?.id ?? null)) return;
+
+        hoveredNodeRef.current = nearest;
+        if (!nearest) {
+          hoveredNeighborhoodRef.current = null;
+          return;
+        }
+
+        const neighbors = adjacencyMap.get(nearest.id);
+        hoveredNeighborhoodRef.current = new Set([
+          nearest.id,
+          ...(neighbors ? Array.from(neighbors) : []),
+        ]);
+      };
+
+      const handleClick = (e: MouseEvent) => {
+        const { x, y } = toGraphCoords(e.clientX, e.clientY);
+        setSelectedNode(findNearestNode(x, y));
+      };
+
+      const handleMouseMove = (e: MouseEvent) => {
+        if (hoverRaf) return;
+        const clientX = e.clientX;
+        const clientY = e.clientY;
+        hoverRaf = requestAnimationFrame(() => {
+          hoverRaf = 0;
+          updateHover(clientX, clientY);
+        });
+      };
+
+      const handleMouseLeave = () => {
+        if (hoverRaf) {
+          cancelAnimationFrame(hoverRaf);
+          hoverRaf = 0;
+        }
+        hoveredNodeRef.current = null;
+        hoveredNeighborhoodRef.current = null;
       };
 
       canvas.addEventListener("click", handleClick);
-      cleanup = () => canvas.removeEventListener("click", handleClick);
+      canvas.addEventListener("mousemove", handleMouseMove);
+      canvas.addEventListener("mouseleave", handleMouseLeave);
+      cleanup = () => {
+        canvas.removeEventListener("click", handleClick);
+        canvas.removeEventListener("mousemove", handleMouseMove);
+        canvas.removeEventListener("mouseleave", handleMouseLeave);
+        if (hoverRaf) cancelAnimationFrame(hoverRaf);
+      };
     };
 
     requestAnimationFrame(findCanvas);
     return () => { cancelled = true; cleanup?.(); };
-  }, [graphWithPositions.nodes]);
+  }, [graphWithPositions.nodes, adjacencyMap]);
 
   const selectedNodeNeighbors = useMemo(() => {
     if (!selectedNode) return [];
@@ -391,15 +531,28 @@ const GraphPage = () => {
           })}
         </div>
 
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/50" />
-          <input
-            type="text"
-            placeholder="search files..."
-            value={searchQuery}
-            onChange={(e) => handleSearch(e.target.value)}
-            className="w-48 rounded-md border border-border bg-background py-1.5 pl-8 pr-3 font-mono text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
-          />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              setLabelMode((m) => (m === "auto" ? "all" : m === "all" ? "hover" : "auto"))
+            }
+            title="Cycle label display: auto → all → hover"
+            className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Tags className="size-3.5" />
+            labels: {labelMode}
+          </button>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/50" />
+            <input
+              type="text"
+              placeholder="search files..."
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="w-48 rounded-md border border-border bg-background py-1.5 pl-8 pr-3 font-mono text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+            />
+          </div>
         </div>
       </div>
 
@@ -457,6 +610,7 @@ const GraphPage = () => {
                 enableZoomInteraction
                 enablePanInteraction
                 autoPauseRedraw={false}
+                onRenderFramePre={handleRenderFramePre}
               />
               {/* Legend */}
               <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-x-4 gap-y-1.5 rounded-lg border border-border bg-background/80 px-3 py-2 backdrop-blur">
@@ -469,7 +623,7 @@ const GraphPage = () => {
               </div>
               {/* Supported languages disclaimer */}
               <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-border bg-background/80 px-2.5 py-1 font-mono text-[10px] text-muted-foreground/60 backdrop-blur">
-                AST parsing: TS · JS · Kotlin · Java · Python · Go · Rust · Ruby · PHP
+                AST parsing: TS/TSX · JS · Kotlin · Java · Python · Go · Rust · PHP
               </div>
               {/* Node count */}
               <div className="pointer-events-none absolute right-3 top-3 rounded-md border border-border bg-background/80 px-2.5 py-1 font-mono text-[10px] text-muted-foreground backdrop-blur">
