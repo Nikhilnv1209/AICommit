@@ -13,9 +13,12 @@ import { Separator } from "@/components/ui/separator";
 const BillingPage = () => {
   const [creditsToBuy, setCreditsToBuy] = useState(50);
 
-  const { data, isLoading: isLoadingCredits } = useQuery({
+  const { data: credits, isLoading: isLoadingCredits } = useQuery({
     queryKey: ["userCredits"],
-    queryFn: async () => await getUserCredits(),
+    queryFn: async () => {
+      const res = await getUserCredits();
+      return res.success ? res.credits : null;
+    },
   });
 
   const { mutate: createSession, isPending: isCreatingSession } = useMutation({
@@ -94,7 +97,7 @@ const BillingPage = () => {
                 <div className="h-12 w-28 animate-pulse rounded-md bg-muted" />
               ) : (
                 <p className="font-mono text-5xl font-medium tabular-nums">
-                  {data?.credits ?? 0}
+                  {credits ?? 0}
                 </p>
               )}
               <p className="mt-1 font-mono text-[11px] text-muted-foreground">credits available</p>

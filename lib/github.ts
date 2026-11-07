@@ -2,6 +2,7 @@ import { prisma } from "@/prisma/client"
 import { Octokit } from "octokit"
 import axios from "axios"
 import { aiSummarizeCommit } from "./ai"
+import { resolveProjectOwnerUserId } from "./ai-config"
 import { logError, logInfo, logDebug } from './logger'
 
 export const octokit = new Octokit({
@@ -78,6 +79,14 @@ export const pollCommits = async (
     let successCount = 0
     let failedCount = 0
 
+    // Background polling has no request context, so resolve the project owner
+    // to look up their AI configuration.
+    const ownerUserId = await resolveProjectOwnerUserId(projectId)
+    if (!ownerUserId) {
+      logError('PollCommits', `No owner found for project ${projectId}, cannot summarize commits`)
+      return { count: 0, success: 0, failed: unProcessedCommits.length }
+    }
+
     // Process commits one by one, saving each to DB immediately so that
     // if the server restarts, already-processed commits are skipped by
     // filterUnprocessedCommits and we resume from where we left off.
@@ -94,7 +103,7 @@ export const pollCommits = async (
       })
 
       try {
-        const summary = await summerizeCommit(githubUrl, commit.commitHash)
+        const summary = await summerizeCommit(ownerUserId, githubUrl, commit.commitHash)
         // Save immediately so progress survives server restarts
         await prisma.commit.upsert({
           where: { commitHash: commit.commitHash },
@@ -133,6 +142,26 @@ export const pollCommits = async (
     }
 
     logInfo('PollCommits', `Successfully processed ${successCount} commits, ${failedCount} failed`, true)
+
+    // Charge credits for the successful summaries (server fallback only; BYO
+    // chat keys are free). Done once at the end so partial failures only bill
+    // for what actually succeeded.
+    if (successCount > 0) {
+      try {
+        const { chargeBatch, CREDIT_COSTS } = await import("./credits");
+        await chargeBatch(
+          ownerUserId,
+          successCount,
+          CREDIT_COSTS.COMMIT_SUMMARY,
+          "COMMIT_SUMMARY",
+          "CHAT",
+          { projectId, description: `Summarized ${successCount} commits` }
+        );
+      } catch (e) {
+        logError('PollCommits', 'Failed to charge credits for commit summaries:', e)
+      }
+    }
+
     return { count: successCount, success: successCount, failed: failedCount }
   } catch (error: any) {
     const errorMessage = error && typeof error === 'object' && error.message 
@@ -144,7 +173,7 @@ export const pollCommits = async (
   }
 }
 
-async function summerizeCommit(githubUrl: string, commitHash: string) {
+async function summerizeCommit(userId: string, githubUrl: string, commitHash: string) {
   try {
     const response = await axios.get(`${githubUrl}/commit/${commitHash}.diff`, {
       headers: { Accept: "application/vnd.github.v3.diff" }
@@ -155,7 +184,7 @@ async function summerizeCommit(githubUrl: string, commitHash: string) {
       throw new Error(`Empty diff for commit ${commitHash}`);
     }
     
-    return await aiSummarizeCommit(data) || "";
+    return await aiSummarizeCommit(userId, data) || "";
   } catch (error) {
     logError('SummarizeCommit', `Error getting or summarizing commit ${commitHash}:`, error);
     throw error;

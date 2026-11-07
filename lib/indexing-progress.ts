@@ -1,3 +1,5 @@
+import { prisma } from '@/prisma/client';
+
 export type IndexStatus = 'IDLE' | 'INDEXING' | 'COMPLETED' | 'ERROR';
 
 type ProgressState = {
@@ -7,14 +9,10 @@ type ProgressState = {
   message?: string;
 };
 
-let prismaInstance: any = null;
-
+// Reuse the shared client so indexing progress and the rest of the app
+// share one connection pool and one driver configuration.
 async function getPrisma() {
-  if (!prismaInstance) {
-    const { PrismaClient } = require('@prisma/client');
-    prismaInstance = new PrismaClient();
-  }
-  return prismaInstance;
+  return prisma;
 }
 
 export async function startIndexing(projectId: string) {

@@ -1,5 +1,6 @@
-import { Document } from 'langchain/document';
+import { Document } from '@langchain/core/documents';
 import { batchProcessDocuments } from './ai';
+import { resolveProjectOwnerUserId } from './ai-config';
 import { prisma } from '@/prisma/client';
 import { indexingManager } from '@/lib/indexing-manager';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
@@ -406,7 +407,41 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
     await new Promise(resolve => setTimeout(resolve, 200));
 
     if (docs.length > 0) {
+      // Background indexing has no request context — resolve the project owner
+      // and run AI under their configuration.
+      const ownerUserId = await resolveProjectOwnerUserId(projectId);
+      if (!ownerUserId) {
+        throw new Error(`No owner found for project ${projectId}; cannot run AI processing.`);
+      }
+
+      // Pre-flight: if indexing bills credits (server fallback only), make sure
+      // the owner can afford all files about to be processed. This runs for both
+      // initial indexing and reindex, preventing free indexing on insufficient
+      // balance. BYO embedding keys skip this entirely (free).
+      try {
+        const { shouldCharge, CREDIT_COSTS, InsufficientCreditsError } = await import("./credits");
+        if (await shouldCharge(ownerUserId, "EMBEDDING")) {
+          const owner = await prisma.user.findUnique({
+            where: { id: ownerUserId },
+            select: { credits: true },
+          });
+          const needed = docs.length * CREDIT_COSTS.REINDEX;
+          if (!owner || owner.credits < needed) {
+            throw new InsufficientCreditsError(
+              needed,
+              owner?.credits ?? 0
+            );
+          }
+        }
+      } catch (e: any) {
+        // Re-throw insufficient-credits so the indexing job aborts cleanly;
+        // swallow unrelated check errors so a credits hiccup never blocks BYO users.
+        if (e?.name === "InsufficientCreditsError") throw e;
+        logWarning('Indexing', `Credit pre-flight check skipped: ${e?.message || e}`);
+      }
+
       const results = await batchProcessDocuments(
+        ownerUserId,
         docs,
         async (processed, fileName) => {
           await indexingManager.updateProgress(projectId, processed, docs.length, fileName);
@@ -424,6 +459,25 @@ export const indexGithubRepo = async (projectId: string, githubUrl: string, gith
         projectId,
         MAX_DB_CONCURRENCY
       );
+
+      // Charge credits for the successfully processed files (server fallback
+      // only; BYO embedding keys are free). This runs for both initial index
+      // and reindex, billing only for files actually embedded this run.
+      if (success > 0) {
+        try {
+          const { chargeBatch, CREDIT_COSTS } = await import("./credits");
+          await chargeBatch(
+            ownerUserId,
+            success,
+            CREDIT_COSTS.REINDEX,
+            "REINDEX",
+            "EMBEDDING",
+            { projectId, description: `Embedded ${success} files` }
+          );
+        } catch (e) {
+          logError('Indexing', 'Failed to charge credits for file embedding:', e);
+        }
+      }
 
       await indexingManager.recordErrorSummary(projectId, success, failed);
       await new Promise(resolve => setTimeout(resolve, 500));

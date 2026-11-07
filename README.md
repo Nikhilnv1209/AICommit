@@ -98,6 +98,7 @@ CLERK_SECRET_KEY       # Clerk secret key
 CLOUDINARY_*            # Cloudinary configuration
 ASSEMBLYAI_API_KEY     # AssemblyAI API key
 STRIPE_SECRET_KEY      # Stripe secret key
+PRISMA_DRIVER          # Optional: "pg" to use a driver adapter instead of the Prisma query engine
 ```
 
 ## Documentation

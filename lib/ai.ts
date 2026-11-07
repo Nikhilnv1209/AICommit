@@ -1,9 +1,21 @@
-import { Document } from '@langchain/core/documents';
-import winston from 'winston';
+import { Document } from "@langchain/core/documents";
+import type OpenAI from "openai";
+import type { ConfigPurpose } from "@prisma/client";
+import winston from "winston";
 
-// Configure Winston logger
+import {
+  loadProviderConfig,
+  buildProvider,
+  AI_NOT_CONFIGURED,
+  type ProviderConfig,
+} from "./ai-config";
+
+// ────────────────────────────────────────────────────────────────────
+// Logger
+// ────────────────────────────────────────────────────────────────────
+
 const logger = winston.createLogger({
-  level: 'info',
+  level: "info",
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level}]: ${message}`)
@@ -11,32 +23,20 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
-// ============================================================
-// PROVIDER TYPES
-// ============================================================
-
-export type ProviderType = 'opencode' | 'cohere';
-
-export interface AIProvider {
-  summarize(prompt: string): Promise<string>;
-  name: string;
+/** Human-readable message for the "no config yet" case, surfaced to users. */
+export function isNotConfiguredError(error: unknown): boolean {
+  return error instanceof Error && error.message === AI_NOT_CONFIGURED;
 }
 
-export interface EmbeddingProvider {
-  embed(text: string): Promise<number[]>;
-  name: string;
-}
-
-// ============================================================
-// UNIFIED RATE LIMITER
-// ============================================================
+// ────────────────────────────────────────────────────────────────────
+// Rate limiter (keyed per user+model so users never block each other)
+// ────────────────────────────────────────────────────────────────────
 
 interface QueueItem<T> {
   execute: () => Promise<T>;
   resolve: (value: T) => void;
   reject: (reason: unknown) => void;
   retryCount: number;
-  addedAt: number;
 }
 
 interface RateLimitConfig {
@@ -45,46 +45,30 @@ interface RateLimitConfig {
 }
 
 const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
-  'deepseek-v4-flash': { maxRequestsPerMinute: 60, cooldownMs: 60000 },
-  'deepseek-v4-flash-free': { maxRequestsPerMinute: 60, cooldownMs: 60000 },
-  'embed-english-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
-  'embed-english-light-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
-  'embed-multilingual-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
-  'embed-multilingual-light-v3.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
-  'embed-v4.0': { maxRequestsPerMinute: 2000, cooldownMs: 60000 },
+  // generous defaults; unknown models fall back to a safe 30/min
 };
 
 class UnifiedRateLimiter {
   private queue: QueueItem<any>[] = [];
-  private requestsThisMinute: number = 0;
-  private lastResetTime: number = Date.now();
-  private processingQueue: boolean = false;
-  private readonly maxRetries: number = 3;
+  private requestsThisMinute = 0;
+  private lastResetTime = Date.now();
+  private processingQueue = false;
+  private readonly maxRetries = 3;
   private readonly modelName: string;
   private readonly maxRequestsPerMinute: number;
   private readonly cooldownMs: number;
 
   constructor(modelName: string) {
     this.modelName = modelName;
-    const config = DEFAULT_RATE_LIMITS[modelName] || { maxRequestsPerMinute: 30, cooldownMs: 60000 };
+    const config = DEFAULT_RATE_LIMITS[modelName] || { maxRequestsPerMinute: 30, cooldownMs: 60_000 };
     this.maxRequestsPerMinute = config.maxRequestsPerMinute;
     this.cooldownMs = config.cooldownMs;
-    logger.info(`Initialized rate limiter for ${modelName}: ${this.maxRequestsPerMinute} req/min`);
   }
 
-  async enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  enqueue<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({
-        execute: fn,
-        resolve,
-        reject,
-        retryCount: 0,
-        addedAt: Date.now(),
-      });
-
-      if (!this.processingQueue) {
-        this.processQueue();
-      }
+      this.queue.push({ execute: fn, resolve, reject, retryCount: 0 });
+      if (!this.processingQueue) this.processQueue();
     });
   }
 
@@ -93,18 +77,17 @@ class UnifiedRateLimiter {
       this.processingQueue = false;
       return;
     }
-
     this.processingQueue = true;
-    const now = Date.now();
 
+    const now = Date.now();
     if (now - this.lastResetTime > this.cooldownMs) {
       this.requestsThisMinute = 0;
       this.lastResetTime = now;
     }
 
     if (this.requestsThisMinute >= this.maxRequestsPerMinute) {
-      const timeToWait = this.cooldownMs - (now - this.lastResetTime);
-      setTimeout(() => this.processQueue(), timeToWait);
+      const wait = this.cooldownMs - (now - this.lastResetTime);
+      setTimeout(() => this.processQueue(), wait);
       return;
     }
 
@@ -120,298 +103,137 @@ class UnifiedRateLimiter {
       item.resolve(result);
       setTimeout(() => this.processQueue(), 50);
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      if (errorMsg.includes('429') || errorMsg.toLowerCase().includes('rate limit')) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
         const retryCount = item.retryCount + 1;
         if (retryCount <= this.maxRetries) {
           this.queue.push({ ...item, retryCount });
           setTimeout(() => this.processQueue(), this.cooldownMs);
-        } else {
-          item.reject(error);
-          setTimeout(() => this.processQueue(), 50);
+          return;
         }
-      } else {
-        item.reject(error);
-        setTimeout(() => this.processQueue(), 50);
       }
+      item.reject(error);
+      setTimeout(() => this.processQueue(), 50);
     }
   }
 }
 
-const rateLimiters: Map<string, UnifiedRateLimiter> = new Map();
-
-function getRateLimiter(modelName: string): UnifiedRateLimiter {
-  if (!rateLimiters.has(modelName)) {
-    rateLimiters.set(modelName, new UnifiedRateLimiter(modelName));
-  }
-  return rateLimiters.get(modelName)!;
+const rateLimiters = new Map<string, UnifiedRateLimiter>();
+function getRateLimiter(key: string): UnifiedRateLimiter {
+  if (!rateLimiters.has(key)) rateLimiters.set(key, new UnifiedRateLimiter(key));
+  return rateLimiters.get(key)!;
 }
 
-// ============================================================
-// OPENCODE ZEN PROVIDER (Summarization + Chat — OpenAI-compatible)
-// ============================================================
+// ────────────────────────────────────────────────────────────────────
+// Provider resolution (per-purpose)
+// ────────────────────────────────────────────────────────────────────
 
-const OPENCODE_BASE_URL = process.env.OPENCODE_BASE_URL || 'https://opencode.ai/zen/v1';
-const OPENCODE_API_KEY = process.env.OPENCODE_API_KEY || 'public';
-const OPENCODE_MODEL = process.env.OPENCODE_MODEL || 'deepseek-v4-flash';
+async function getProvider(
+  userId: string,
+  purpose: ConfigPurpose
+): Promise<{ client: OpenAI; config: ProviderConfig }> {
+  const config = await loadProviderConfig(userId, purpose);
+  return { client: buildProvider(config), config };
+}
 
-class OpenCodeProvider implements AIProvider {
-  name = 'opencode';
-  private client: any;
-  private model: string;
+/**
+ * Read a chat-completion response, falling back to reasoning_content for
+ * reasoning models that leave `content` empty on the first pass.
+ */
+function readChatMessage(message: any): string {
+  const content = message?.content;
+  const reasoning = message?.reasoning_content || message?.reasoning;
+  if (content && String(content).trim()) return String(content);
+  if (reasoning && String(reasoning).trim()) return String(reasoning);
+  return "";
+}
 
-  constructor() {
-    const OpenAI = require('openai');
-    this.client = new OpenAI({
-      apiKey: OPENCODE_API_KEY,
-      baseURL: OPENCODE_BASE_URL,
-    });
-    this.model = OPENCODE_MODEL;
-    logger.info(`OpenCode provider initialized: baseURL=${OPENCODE_BASE_URL}, model=${this.model}`);
-  }
+// ────────────────────────────────────────────────────────────────────
+// Exported AI operations (all require a userId)
+// ────────────────────────────────────────────────────────────────────
 
-  async summarize(prompt: string): Promise<string> {
-    const limiter = getRateLimiter(this.model);
-    return limiter.enqueue(async () => {
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: [{ role: 'user', content: prompt }],
+export const aiSummarizeCommit = async (userId: string, commitDiff: string): Promise<string> => {
+  const { client, config } = await getProvider(userId, "CHAT");
+  const limiter = getRateLimiter(`${userId}:${config.model}`);
+  const prompt = `You are an expert programmer summarizing a git diff.
+Git diff format reminder:
+- Metadata lines (e.g., \`diff --git a/file b/file\`) indicate file changes.
+- \`+\` lines are added, \`-\` lines are deleted, others are context.
+Here is the git diff:
+\`\`\`diff
+${commitDiff}
+\`\`\`
+Provide a concise summary of changes in bullet points. Avoid file names unless necessary and *please provide the summary in no more than 100 words*.`;
+
+  try {
+    const response = await limiter.enqueue(() =>
+      client.chat.completions.create({
+        model: config.model,
+        messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
         max_tokens: 8000,
-      });
-      const msg = response.choices[0]?.message;
-      const content = msg?.content;
-      // Some OpenAI-compatible models (e.g. reasoning models) put the answer
-      // in reasoning_content and leave content null on the first pass.
-      const fallback = (msg as any)?.reasoning_content || (msg as any)?.reasoning;
-      const result = (content && content.trim())
-        ? content
-        : (fallback && fallback.trim())
-          ? fallback
-          : '';
-      if (!result) {
-        logger.warn(`[OpenCodeProvider] Empty response from ${this.model}. message=${JSON.stringify(msg)}`);
-      }
-      return result || 'No summary available.';
-    });
-  }
-}
-
-// ============================================================
-// COHERE PROVIDER (Embeddings only)
-// ============================================================
-
-class CohereProvider implements EmbeddingProvider {
-  name = 'cohere';
-  private client: any;
-  private embedModel: string;
-
-  constructor() {
-    const { CohereClientV2 } = require('cohere-ai');
-    this.client = new CohereClientV2({
-      token: process.env.COHERE_API_KEY ?? '',
-    });
-    this.embedModel = process.env.COHERE_EMBED_MODEL || 'embed-english-v3.0';
-    logger.info(`Cohere provider initialized with model: ${this.embedModel}`);
-  }
-
-  async embed(text: string): Promise<number[]> {
-    const limiter = getRateLimiter(this.embedModel);
-    const safeText = (text || '').trim() || 'empty document';
-    return limiter.enqueue(async () => {
-      const response = await this.client.embed({
-        model: this.embedModel,
-        texts: [safeText],
-        inputType: 'search_document',
-        embeddingTypes: ['float'],
-      });
-      return response.embeddings.float[0];
-    });
-  }
-}
-
-// ============================================================
-// PROVIDER FACTORY
-// ============================================================
-
-let mainProviderInstance: AIProvider | null = null;
-let embedProviderInstance: EmbeddingProvider | null = null;
-
-export function getMainProvider(): AIProvider {
-  if (mainProviderInstance) return mainProviderInstance;
-  mainProviderInstance = new OpenCodeProvider();
-  return mainProviderInstance;
-}
-
-export function getEmbedProvider(): EmbeddingProvider {
-  if (embedProviderInstance) return embedProviderInstance;
-  embedProviderInstance = new CohereProvider();
-  return embedProviderInstance;
-}
-
-// ============================================================
-// STREAMING PROVIDER (for Q&A with context)
-// ============================================================
-
-export interface StreamProvider {
-  stream(prompt: string): AsyncGenerator<string, void, unknown>;
-  name: string;
-}
-
-class OpenCodeStreamProvider implements StreamProvider {
-  name = 'opencode';
-  private client: any;
-  private model: string;
-
-  constructor() {
-    const OpenAI = require('openai');
-    this.client = new OpenAI({
-      apiKey: OPENCODE_API_KEY,
-      baseURL: OPENCODE_BASE_URL,
-    });
-    this.model = OPENCODE_MODEL;
-    logger.info(`OpenCode streaming provider initialized: model=${this.model}`);
-  }
-
-  async *stream(prompt: string): AsyncGenerator<string, void, unknown> {
-    const limiter = getRateLimiter(this.model);
-    const response = await limiter.enqueue(async () => {
-      return await this.client.chat.completions.create({
-        model: this.model,
-        messages: [{ role: 'user', content: prompt }],
-        stream: true,
-        temperature: 0.2,
-        max_tokens: 16000,
-      });
-    });
-
-    for await (const chunk of response) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) yield content;
-    }
-  }
-
-  async *streamMessages(messages: Array<{ role: string; content: string }>): AsyncGenerator<{ type: "thinking" | "answer"; content: string }, void, unknown> {
-    const limiter = getRateLimiter(this.model);
-    const response = await limiter.enqueue(async () => {
-      return await this.client.chat.completions.create({
-        model: this.model,
-        messages: messages as any,
-        stream: true,
-        temperature: 0.2,
-        max_tokens: 16000,
-      });
-    });
-
-    for await (const chunk of response) {
-      const delta = chunk.choices[0]?.delta;
-      // Reasoning models (e.g. DeepSeek) put thinking tokens in reasoning_content
-      const thinking = (delta as any)?.reasoning_content || (delta as any)?.reasoning;
-      if (thinking) {
-        yield { type: "thinking" as const, content: thinking };
-      }
-      if (delta?.content) {
-        yield { type: "answer" as const, content: delta.content };
-      }
-    }
-  }
-}
-
-let streamProviderInstance: StreamProvider | null = null;
-
-export function getStreamProvider(): StreamProvider {
-  if (streamProviderInstance) return streamProviderInstance;
-  streamProviderInstance = new OpenCodeStreamProvider();
-  return streamProviderInstance;
-}
-
-export async function* streamAIChat(prompt: string): AsyncGenerator<string, void, unknown> {
-  const provider = getStreamProvider();
-  logger.info(`[${provider.name}] Streaming chat response`);
-  try {
-    for await (const chunk of provider.stream(prompt)) {
-      yield chunk;
-    }
+      })
+    );
+    const result = readChatMessage(response.choices[0]?.message);
+    if (!result) logger.warn(`[aiSummarizeCommit] Empty response from ${config.model}`);
+    return result || "No summary available.";
   } catch (error) {
-    logger.error(`[${provider.name}] Error in streaming chat:`, error);
-    throw error;
-  }
-}
-
-export async function* streamAIChatWithMessages(
-  messages: Array<{ role: string; content: string }>
-): AsyncGenerator<{ type: "thinking" | "answer"; content: string }, void, unknown> {
-  const provider = getStreamProvider() as any;
-  logger.info(`[${provider.name}] Streaming chat response (${messages.length} messages)`);
-  try {
-    for await (const chunk of provider.streamMessages(messages)) {
-      yield chunk;
-    }
-  } catch (error) {
-    logger.error(`[${provider.name}] Error in streaming chat:`, error);
-    throw error;
-  }
-}
-
-// ============================================================
-// EXPORTED FUNCTIONS
-// ============================================================
-
-export const aiSummarizeCommit = async (commitDiff: string): Promise<string> => {
-  const provider = getMainProvider();
-  const prompt = `
-    You are an expert programmer summarizing a git diff.
-    Git diff format reminder:
-    - Metadata lines (e.g., \`diff --git a/file b/file\`) indicate file changes.
-    - \`+\` lines are added, \`-\` lines are deleted, others are context.
-    Here is the git diff:
-    \`\`\`diff
-    ${commitDiff}
-    \`\`\`
-    Provide a concise summary of changes in bullet points. Avoid file names unless necessary and *please provide the summary in no more than 100 words*.
-  `;
-  try {
-    const result = await provider.summarize(prompt);
-    return result;
-  } catch (error) {
-    logger.error(`[${provider.name}] Error summarizing commit:`, error);
+    logger.error(`[aiSummarizeCommit] ${config.model} error:`, error);
     throw error;
   }
 };
 
-export const aiSummarizeCode = async (doc: Document): Promise<string> => {
-  const provider = getMainProvider();
+export const aiSummarizeCode = async (userId: string, doc: Document): Promise<string> => {
+  const { client, config } = await getProvider(userId, "CHAT");
+  const limiter = getRateLimiter(`${userId}:${config.model}`);
   const source = doc.metadata.source as string;
   const code = doc.pageContent.slice(0, 10000);
-  const prompt = `
-    You are a senior software engineer onboarding a junior engineer.
-    Explain the purpose of the ${source} file in under 100 words.
-    Code:
-    ---
-    ${code}
-    ---
-  `;
+  const prompt = `You are a senior software engineer onboarding a junior engineer.
+Explain the purpose of the ${source} file in under 100 words.
+Code:
+---
+${code}
+---`;
+
   try {
-    const result = await provider.summarize(prompt);
-    return result;
+    const response = await limiter.enqueue(() =>
+      client.chat.completions.create({
+        model: config.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_tokens: 8000,
+      })
+    );
+    const result = readChatMessage(response.choices[0]?.message);
+    return result || "No summary available.";
   } catch (error) {
-    logger.error(`[${provider.name}] Error summarizing code for ${source}:`, error);
+    logger.error(`[aiSummarizeCode] ${config.model} error for ${source}:`, error);
     throw error;
   }
 };
 
-export const aiGenerateEmbeddings = async (summary: string): Promise<number[]> => {
-  const provider = getEmbedProvider();
+export const aiGenerateEmbeddings = async (userId: string, text: string): Promise<number[]> => {
+  const { client, config } = await getProvider(userId, "EMBEDDING");
+  const limiter = getRateLimiter(`${userId}:${config.model}`);
+  const safeText = (text || "").trim() || "empty document";
+
   try {
-    const result = await provider.embed(summary);
-    return result;
+    const response = await limiter.enqueue(() =>
+      client.embeddings.create({
+        model: config.model,
+        input: safeText,
+        // Vector column is fixed at vector(1024). Models that don't support a
+        // `dimensions` parameter will error with a clear message.
+        dimensions: 1024,
+      })
+    );
+    return response.data[0]?.embedding ?? [];
   } catch (error) {
-    logger.error(`[${provider.name}] Error generating embeddings:`, error);
+    logger.error(`[aiGenerateEmbeddings] ${config.model} error:`, error);
     throw error;
   }
 };
 
-// Batch processing result type
 export interface BatchResult {
   summary: string;
   embedding: number[];
@@ -420,47 +242,107 @@ export interface BatchResult {
 }
 
 export const batchProcessDocuments = async (
+  userId: string,
   docs: Document[],
   onProgress?: (processed: number, fileName: string) => void | Promise<void>
 ): Promise<BatchResult[]> => {
   const results: BatchResult[] = [];
-  const mainProvider = getMainProvider();
-  const embedProvider = getEmbedProvider();
+  logger.info(`[BatchProcess] Starting ${docs.length} docs for user ${userId}`);
 
-  logger.info(`[BatchProcess] Starting with ${docs.length} docs, mainProvider=${mainProvider.name}, embedProvider=${embedProvider.name}`);
-
+  let failed = 0;
   for (let i = 0; i < docs.length; i++) {
     const doc = docs[i];
     const source = doc.metadata.source as string;
 
+    // 1. Summarize — a single file's AI failure must never abort the batch.
+    //    Fall back to a raw snippet so the file is still embedded and searchable.
+    let summary: string;
     try {
-      const code = doc.pageContent.slice(0, 10000);
-      const prompt = `You are a senior software engineer. Explain the purpose of ${source} in under 100 words. Code: ---${code}---`;
-      const summary = await mainProvider.summarize(prompt);
+      summary = await aiSummarizeCode(userId, doc);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[BatchProcess] AI summarize failed for ${source} — using fallback: ${msg}`);
+      summary = `Source file: ${source}\n\n${doc.pageContent.slice(0, 500)}`;
+    }
 
-      const embedding = await embedProvider.embed(summary);
-
-      results.push({
-        summary,
-        embedding,
-        sourceCode: doc.pageContent,
-        fileName: source,
-      });
+    // 2. Embed — if this fails too, skip the file but keep going.
+    try {
+      const embedding = await aiGenerateEmbeddings(userId, summary);
+      results.push({ summary, embedding, sourceCode: doc.pageContent, fileName: source });
 
       if (onProgress) {
-        const progressResult = onProgress(i + 1, source);
-        if (progressResult instanceof Promise) {
-          await progressResult;
-        }
+        const r = onProgress(i + 1, source);
+        if (r instanceof Promise) await r;
       }
-
-      logger.info(`[BatchProcess] Processed ${i + 1}/${docs.length}: ${source}`);
+      logger.info(`[BatchProcess] ${i + 1}/${docs.length}: ${source}`);
     } catch (error) {
-      logger.error(`[BatchProcess] Error processing ${source}:`, error);
-      throw error;
+      failed++;
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[BatchProcess] Embedding failed for ${source}, skipping: ${msg}`);
     }
   }
 
-  logger.info(`[BatchProcess] Completed processing ${docs.length} documents`);
+  logger.info(
+    `[BatchProcess] Completed ${results.length}/${docs.length} documents` +
+    (failed ? `, ${failed} skipped` : "")
+  );
   return results;
 };
+
+// ────────────────────────────────────────────────────────────────────
+// Streaming (Q&A / conversation)
+// ────────────────────────────────────────────────────────────────────
+
+/** Stream a plain prompt as a sequence of answer text chunks. */
+export async function* streamAIChat(
+  userId: string,
+  prompt: string
+): AsyncGenerator<string, void, unknown> {
+  const { client, config } = await getProvider(userId, "CHAT");
+  logger.info(`[streamAIChat] ${config.model}`);
+
+  // Streaming is user-driven (one stream at a time), so the per-model rate
+  // limiter isn't needed here. The OpenAI SDK + our retry headers handle 429s.
+  const stream = await client.chat.completions.create({
+    model: config.model,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+    max_tokens: 16000,
+    stream: true,
+  });
+
+  for await (const chunk of stream) {
+    const content = chunk.choices[0]?.delta?.content;
+    if (content) yield content;
+  }
+}
+
+export type StreamChatChunk = { type: "thinking" | "answer"; content: string };
+
+/**
+ * Stream a chat with an explicit message history. Reasoning-model thinking
+ * tokens are yielded as `thinking`; the final answer as `answer`.
+ */
+export async function* streamAIChatWithMessages(
+  userId: string,
+  messages: Array<{ role: string; content: string }>
+): AsyncGenerator<StreamChatChunk, void, unknown> {
+  const { client, config } = await getProvider(userId, "CHAT");
+  logger.info(`[streamAIChatWithMessages] ${config.model} (${messages.length} messages)`);
+
+  const stream = await client.chat.completions.create({
+    model: config.model,
+    messages: messages as any,
+    temperature: 0.2,
+    max_tokens: 16000,
+    stream: true,
+  });
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta as any;
+    // Reasoning models (e.g. DeepSeek) put thinking tokens in reasoning_content
+    const thinking = delta?.reasoning_content || delta?.reasoning;
+    if (thinking) yield { type: "thinking", content: thinking };
+    if (delta?.content) yield { type: "answer", content: delta.content };
+  }
+}
