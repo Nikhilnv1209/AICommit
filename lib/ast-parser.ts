@@ -2,10 +2,15 @@
 import * as ParserModule from "web-tree-sitter";
 import path from "path";
 import fs from "fs";
-import { createRequire } from "module";
 import { logError } from "./logger";
 
-const require = createRequire(import.meta.url);
+// Asset locations are derived from the project root at runtime. Bundlers
+// rewrite `require.resolve(...)` into internal module ids, so paths computed
+// from it are unusable in a production build; these WASM files are shipped with
+// the serverless function via outputFileTracingIncludes in next.config.ts.
+const nodeModulesDir = path.join(process.cwd(), "node_modules");
+const webTreeSitterDir = path.join(nodeModulesDir, "web-tree-sitter");
+const treeSitterWasmsDir = path.join(nodeModulesDir, "tree-sitter-wasms");
 
 // web-tree-sitter 0.20.x is CommonJS and exports the Parser constructor
 // directly, but bundler interop can wrap it as { default: Parser } or
@@ -20,7 +25,7 @@ const parserGlobal = globalThis as typeof globalThis & {
 };
 
 function loadPatchedParserCtor(): any {
-  const filename = require.resolve("web-tree-sitter/tree-sitter.js");
+  const filename = path.join(webTreeSitterDir, "tree-sitter.js");
   const source = fs.readFileSync(filename, "utf8");
 
   // Emscripten's preamble does `module.exports = Module` when Parser.init()
@@ -41,7 +46,13 @@ function loadPatchedParserCtor(): any {
     "__filename",
     patched
   );
-  factory(mod, mod.exports, require, path.dirname(filename), filename);
+  // Emscripten's preamble only ever requires fs and path, both imported here.
+  const localRequire = ((id: string) => {
+    if (id === "fs") return fs;
+    if (id === "path") return path;
+    throw new Error(`web-tree-sitter loader requested unsupported module "${id}"`);
+  }) as NodeRequire;
+  factory(mod, mod.exports, localRequire, path.dirname(filename), filename);
   return mod.exports;
 }
 
@@ -87,12 +98,9 @@ function resolveParserCtor(): any {
 
 const languageCache = (parserGlobal.__astLanguageCache ??= new Map<string, any>());
 
-const WASM_DIR = path.join(
-  path.dirname(require.resolve("tree-sitter-wasms/package.json")),
-  "out"
-);
+const WASM_DIR = path.join(treeSitterWasmsDir, "out");
 
-const PARSER_WASM = require.resolve("web-tree-sitter/tree-sitter.wasm");
+const PARSER_WASM = path.join(webTreeSitterDir, "tree-sitter.wasm");
 
 const LANGUAGE_WASM: Record<string, string> = {
   typescript: "tree-sitter-typescript.wasm",

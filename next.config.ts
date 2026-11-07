@@ -3,47 +3,18 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   allowedDevOrigins: ["192.168.29.241"],
-  // The webpack hook below is production-only (dev runs Turbopack). Declaring
-  // the default resolve extensions here keeps Next from warning that a webpack
-  // config exists without a Turbopack counterpart.
-  turbopack: {
-    resolveExtensions: [".tsx", ".ts", ".jsx", ".js", ".mjs", ".json"],
-  },
-  // These must stay outside the bundle: web-tree-sitter ships WASM files it
-  // loads from disk at runtime, which webpack cannot parse as modules.
+  // These packages load WASM from disk at runtime, so they must stay outside
+  // the bundle. lib/ast-parser resolves their paths with Node's own resolver,
+  // which keeps webpack from rewriting them into module ids.
   serverExternalPackages: ["web-tree-sitter", "tree-sitter-wasms", "pg"],
-  // The grammar/prelude WASM files are read with fs at runtime, so they are
-  // invisible to the bundler and to build-time file tracing. Include them
-  // explicitly so they exist in the deployed function's node_modules.
+  // The grammar files are read with fs at runtime, so build-time file tracing
+  // cannot see them. Ship them explicitly with the serverless function.
   outputFileTracingIncludes: {
     "/**/*": [
       "./node_modules/web-tree-sitter/tree-sitter.wasm",
       "./node_modules/tree-sitter-wasms/out/**/*.wasm",
+      "./node_modules/tree-sitter-wasms/package.json",
     ],
-  },
-  webpack: (config, { isServer }) => {
-    if (isServer) {
-      // serverExternalPackages only externalizes exact package requests, so
-      // subpath imports (tree-sitter.wasm, package.json) still get resolved by
-      // webpack and fail to compile. Keep them as runtime CommonJS requires.
-      config.externals.push(
-        (
-          { request }: { request?: string },
-          callback: (err?: Error | null, result?: string) => void
-        ) => {
-          if (
-            typeof request === "string" &&
-            /^(web-tree-sitter|tree-sitter-wasms)\//.test(request)
-          ) {
-            return callback(null, `commonjs ${request}`);
-          }
-
-          return callback();
-        }
-      );
-    }
-
-    return config;
   },
   images: {
     remotePatterns: [
