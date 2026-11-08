@@ -71,7 +71,7 @@ export const pollCommits = async (
 
     if (unProcessedCommits.length === 0) {
       logInfo('PollCommits', 'No new commits to process')
-      return { added: 0, success: 0, failed: 0 }
+      return { count: 0, success: 0, failed: 0 }
     }
 
     logInfo('PollCommits', `Processing ${unProcessedCommits.length} new commits`, true)

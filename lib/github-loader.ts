@@ -2,6 +2,7 @@ import { Document } from '@langchain/core/documents';
 import { batchProcessDocuments } from './ai';
 import { resolveProjectOwnerUserId } from './ai-config';
 import { prisma } from '@/prisma/client';
+import { saveSourceCodeEmbedding } from './embedding-store';
 import { indexingManager } from '@/lib/indexing-manager';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { devError, logError, logInfo, logDebug, logWarning } from './logger';
@@ -285,26 +286,19 @@ async function processEmbeddingsInBatches(
 
     const promise = (async () => {
       try {
-        const sourceCodeEmbedding = await prisma.sourceCodeEmbedding.create({
-          data: {
-            sourceCode: embedding.sourceCode,
-            fileName: embedding.fileName,
-            summary: embedding.summary,
-            contentHash: embedding.contentHash,
-            projectId,
-          },
+        const embeddingId = await saveSourceCodeEmbedding({
+          projectId,
+          fileName: embedding.fileName,
+          sourceCode: embedding.sourceCode,
+          summary: embedding.summary,
+          contentHash: embedding.contentHash,
+          embedding: embedding.embedding,
         });
-
-        await prisma.$queryRaw`
-          UPDATE "SourceCodeEmbedding"
-          SET "summeryEmbeddings" = ${embedding.embedding}::vector
-          WHERE "id" = ${sourceCodeEmbedding.id}
-        `;
 
         processedCount += 1;
         logDebug('EmbeddingProcessor', `Created embedding ${i + 1} of ${embeddings.length} for file ${embedding.fileName}`);
         if (onProgress) onProgress(processedCount);
-        return { success: true, id: sourceCodeEmbedding.id, fileName: embedding.fileName };
+        return { success: true, id: embeddingId, fileName: embedding.fileName };
       } catch (err: any) {
         logError('EmbeddingProcessor', `Error saving embedding ${i + 1} of ${embeddings.length} for ${embedding.fileName}:`, {
           message: err.message,

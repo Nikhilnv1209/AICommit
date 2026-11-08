@@ -331,6 +331,26 @@ export async function getProjects() {
   }
 }
 
+/**
+ * Poll for new commits and, when any were found, re-index incrementally.
+ *
+ * Indexing diffs files by blob SHA, so refreshing an otherwise unchanged
+ * project costs one tree request and no file downloads. Without this, the
+ * stored source stayed frozen at the last manual re-index.
+ */
+async function pollCommitsAndRefreshCodebase(projectId: string, githubUrl: string) {
+  const result = await pollCommits(projectId, githubUrl)
+
+  if (result.count > 0) {
+    const status = await indexingManager.getStatus(projectId)
+    if (!status.isActive) {
+      await indexingManager.startIndexing(projectId, githubUrl)
+    }
+  }
+
+  return result
+}
+
 export async function getProjectCommits(projectId: string, githubUrl?: string) {
   try {
     const { userId } = await auth();
@@ -344,7 +364,7 @@ export async function getProjectCommits(projectId: string, githubUrl?: string) {
       if (!status.isActive) {
         Promise.resolve().then(async () => {
           try {
-            await pollCommits(projectId, githubUrl);
+            await pollCommitsAndRefreshCodebase(projectId, githubUrl);
           } catch (e) {
             const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
             logError('PollCommits', 'Error polling commits in background:', errorDetails);
@@ -387,7 +407,7 @@ export async function getProjectCommitsPage(
       if (!status.isActive) {
         Promise.resolve().then(async () => {
           try {
-            await pollCommits(projectId, opts.githubUrl!);
+            await pollCommitsAndRefreshCodebase(projectId, opts.githubUrl!);
           } catch (e) {
             const errorDetails = e && typeof e === 'object' ? e : 'Unknown error';
             logError('PollCommits', 'Error polling commits in background:', errorDetails);
