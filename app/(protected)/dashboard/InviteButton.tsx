@@ -13,6 +13,7 @@ import useProject from "@/hooks/use-project";
 import { Copy, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 const InviteButton = () => {
   const { project } = useProject();
@@ -24,9 +25,14 @@ const InviteButton = () => {
     }
   }, [project]);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(inviteLink);
-    toast.success("Invite link copied to clipboard!");
+  const handleCopy = async () => {
+    const copied = await copyTextToClipboard(inviteLink);
+
+    if (copied) {
+      toast.success("Invite link copied to clipboard!");
+    } else {
+      toast.error("Could not copy automatically — select the link and copy it manually.");
+    }
   };
 
   return (
@@ -48,7 +54,7 @@ const InviteButton = () => {
           <div className="grid flex-1 gap-2">
             <input
               id="link"
-              defaultValue={inviteLink}
+              value={inviteLink}
               readOnly
               className="h-9 flex-1 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             />
