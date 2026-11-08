@@ -35,6 +35,13 @@ const JoinProjectPage = async ({ params }: { params: Promise<{ projectId: string
   });
 
   if (!project) {
+    recordAudit({
+      action: AUDIT_ACTIONS.PROJECT_JOIN,
+      status: "failure",
+      actorId: userId,
+      projectId,
+      error: "project_not_found",
+    });
     // Project not found, redirect to dashboard.
     redirect("/dashboard");
   }

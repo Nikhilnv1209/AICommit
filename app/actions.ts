@@ -226,9 +226,11 @@ export async function getIndexingProgress(projectId: string) {
 }
 
 export async function reindexProject(projectId: string) {
+  let auditUserId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
     if (!projectId) throw new Error("Project id required");
 
     // Verify user has access to the project
@@ -250,6 +252,13 @@ export async function reindexProject(projectId: string) {
     const result = await indexingManager.startIndexing(projectId, project.githubUrl!, project.githubToken || undefined);
 
     if (!result.success) {
+      recordAudit({
+        action: AUDIT_ACTIONS.PROJECT_REINDEX,
+        status: 'failure',
+        actorId: auditUserId,
+        projectId,
+        error: result.message,
+      });
       return { error: result.message };
     }
 
@@ -263,11 +272,20 @@ export async function reindexProject(projectId: string) {
 
     return { success: true, message: result.message };
   } catch (error: any) {
+    recordAudit({
+      action: AUDIT_ACTIONS.PROJECT_REINDEX,
+      status: 'failure',
+      actorId: auditUserId,
+      projectId,
+      error,
+    });
     return { error: error?.message || 'Failed to reindex project' };
   }
 }
 
 export async function submitCreateForm(formdata: TFormData) {
+  let auditUserId: string | null = null;
+  let auditProjectId: string | null = null;
   try {
     const result = createFormSchema.safeParse(formdata); // Server-side validation
 
@@ -277,6 +295,7 @@ export async function submitCreateForm(formdata: TFormData) {
 
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     // Pre-check credits so users can't create a project they can't afford.
     // The actual deduction happens on success inside the indexer (charge-on-
@@ -306,6 +325,7 @@ export async function submitCreateForm(formdata: TFormData) {
     });
 
     if (!project) throw new Error("Failed to create the project.");
+    auditProjectId = project.id;
 
     recordAudit({
       action: AUDIT_ACTIONS.PROJECT_CREATE,
@@ -328,6 +348,13 @@ export async function submitCreateForm(formdata: TFormData) {
     return { success: `Project "${project.name}" created successfully! Indexing has started in the background.${suffix}`, projectId: project.id };
   } catch (error: any) {
     logError('ProjectCreation', 'Error creating project:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.PROJECT_CREATE,
+      status: 'failure',
+      actorId: auditUserId,
+      projectId: auditProjectId,
+      error,
+    });
     const message = error?.message || "Failed to create the project. Please try again.";
     return { error: message };
   }
@@ -372,7 +399,16 @@ async function pollCommitsAndRefreshCodebase(projectId: string, githubUrl: strin
   if (result.count > 0) {
     const status = await indexingManager.getStatus(projectId)
     if (!status.isActive) {
-      await indexingManager.startIndexing(projectId, githubUrl)
+      const started = await indexingManager.startIndexing(projectId, githubUrl)
+      if (started.success) {
+        recordAudit({
+          action: AUDIT_ACTIONS.PROJECT_REINDEX,
+          source: 'system',
+          actorId: null,
+          projectId,
+          metadata: { trigger: 'commits', commits: result.count },
+        })
+      }
     }
   }
 
@@ -469,9 +505,11 @@ export async function getProjectCommitsPage(
 }
 
 export async function archiveProject(projectId: string) {
+  let auditUserId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     // Atomically find the project by its ID and user access, and update it.
     // This avoids a separate read query for verification.
@@ -502,6 +540,13 @@ export async function archiveProject(projectId: string) {
     // Prisma throws an error if the record to update is not found.
     // We can treat that as a "not found or access denied" case.
     logError('ArchiveProject', 'Error archiving project:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.PROJECT_ARCHIVE,
+      status: 'failure',
+      actorId: auditUserId,
+      projectId,
+      error,
+    });
     return { success: false, error: "Project not found or access denied." };
   }
 }
@@ -607,9 +652,11 @@ export async function uploadFileToCloudinary(
 
 // Meeting actions
 export async function createMeeting(projectId: string, name: string, meetingUrl: string) {
+  let auditUserId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     // Verify user has access to the project
     const project = await prisma.project.findFirst({
@@ -646,6 +693,13 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
     return { success: true, meeting };
   } catch (error: any) {
     logError('CreateMeeting', 'Error creating meeting:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.MEETING_CREATE,
+      status: 'failure',
+      actorId: auditUserId,
+      projectId,
+      error,
+    });
     return { success: false, error: error.message || "Failed to create meeting." };
   }
 }
@@ -714,15 +768,19 @@ export async function getMeetingById(meetingId: string) {
 }
 
 export async function deleteMeeting(meetingId: string, meetingUrl: string) {
+  let auditUserId: string | null = null;
+  let auditProjectId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     // Capture the owning project for the audit trail before the row is gone.
     const meeting = await prisma.meeting.findFirst({
       where: { id: meetingId, project: { userToProject: { some: { userId } } } },
       select: { projectId: true },
     });
+    auditProjectId = meeting?.projectId ?? null;
 
     // By performing deletes within a transaction, we make the operation atomic.
     // If any part fails, the entire transaction is rolled back.
@@ -770,6 +828,14 @@ export async function deleteMeeting(meetingId: string, meetingUrl: string) {
     return { success: true };
   } catch (error: any) {
     logError('DeleteMeeting', 'Error deleting meeting:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.MEETING_DELETE,
+      status: 'failure',
+      actorId: auditUserId,
+      projectId: auditProjectId,
+      target: meetingId,
+      error,
+    });
     return { success: false, error: "Failed to delete meeting." };
   }
 }
@@ -875,9 +941,11 @@ export async function saveAIConfigSection(input: {
   apiKey: string;
   model: string;
 }): Promise<{ success: boolean; error?: string }> {
+  let auditUserId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     if (!isEncryptionAvailable()) {
       return { success: false, error: "Server is missing AI_CONFIG_ENCRYPTION_KEY — cannot store API keys." };
@@ -922,6 +990,13 @@ export async function saveAIConfigSection(input: {
     return { success: true };
   } catch (error: any) {
     logError('SaveAIConfig', 'Error saving AI config:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.AI_CONFIG_SAVE,
+      status: 'failure',
+      actorId: auditUserId,
+      target: input.purpose,
+      error,
+    });
     return { success: false, error: error.message || "Failed to save AI config." };
   }
 }
@@ -929,9 +1004,11 @@ export async function saveAIConfigSection(input: {
 export async function deleteAIConfigSection(input: {
   purpose: "CHAT" | "EMBEDDING";
 }): Promise<{ success: boolean; error?: string }> {
+  let auditUserId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     await prisma.userAIConfig.deleteMany({
       where: { userId, purpose: input.purpose },
@@ -947,6 +1024,13 @@ export async function deleteAIConfigSection(input: {
     return { success: true };
   } catch (error: any) {
     logError('DeleteAIConfig', 'Error deleting AI config:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.AI_CONFIG_DELETE,
+      status: 'failure',
+      actorId: auditUserId,
+      target: input.purpose,
+      error,
+    });
     return { success: false, error: error.message || "Failed to delete AI config." };
   }
 }
@@ -1078,14 +1162,18 @@ export async function getConversations(projectId: string) {
 }
 
 export async function deleteConversation(conversationId: string) {
+  let auditUserId: string | null = null;
+  let auditProjectId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
       select: { projectId: true },
     });
+    auditProjectId = conversation?.projectId ?? null;
 
     // Soft delete: mark as deleted immediately
     await prisma.conversation.update({
@@ -1114,6 +1202,14 @@ export async function deleteConversation(conversationId: string) {
     return { success: true };
   } catch (error: any) {
     logError('DeleteConversation', 'Error:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.CONVERSATION_DELETE,
+      status: 'failure',
+      actorId: auditUserId,
+      projectId: auditProjectId,
+      target: conversationId,
+      error,
+    });
     return { success: false, error: error.message };
   }
 }
@@ -1353,9 +1449,11 @@ export async function editMessage(
   conversationId: string,
   projectId: string
 ) {
+  let auditUserId: string | null = null;
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
+    auditUserId = userId;
 
     // Find the edited message to get its timestamp
     const editedMessage = await prisma.message.findUnique({
@@ -1388,6 +1486,15 @@ export async function editMessage(
     return await buildAndStreamResponse(conversationId, newContent, projectId, userId);
   } catch (error: any) {
     logError('EditMessage', 'Error in editMessage:', error);
+    recordAudit({
+      action: AUDIT_ACTIONS.MESSAGE_EDIT,
+      status: 'failure',
+      actorId: auditUserId,
+      projectId,
+      target: messageId,
+      metadata: { conversationId },
+      error,
+    });
     const stream = createStreamableValue();
     stream.error(new Error(error.message || "Failed to edit message"));
     return { output: stream.value, fileReference: [] };

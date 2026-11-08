@@ -60,3 +60,28 @@ test('caps oversized metadata instead of storing it', () => {
 
   assert.deepEqual(payload.metadata, { truncated: true, keys: ['blob', 'keep'] })
 })
+
+test('preserves failure status and message', () => {
+  const payload = buildAuditPayload({
+    action: AUDIT_ACTIONS.PROJECT_ARCHIVE,
+    status: 'failure',
+    actorId: 'user_123',
+    projectId: 'proj_1',
+    error: new Error('Project not found or access denied.'),
+  })
+
+  assert.equal(payload.status, 'failure')
+  assert.equal(payload.error, 'Project not found or access denied.')
+})
+
+test('keeps an explicit source for system events without an actor', () => {
+  const payload = buildAuditPayload({
+    action: AUDIT_ACTIONS.PROJECT_REINDEX,
+    source: 'system',
+    actorId: null,
+    projectId: 'proj_1',
+  })
+
+  assert.equal(payload.source, 'system')
+  assert.equal(payload.actorId, null)
+})
