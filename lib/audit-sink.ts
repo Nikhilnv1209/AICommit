@@ -24,6 +24,10 @@ class BlobSink implements AuditSink {
       access: 'private',
       contentType: 'application/gzip',
       addRandomSuffix: false,
+      // A retry after a crash between upload and delete re-derives the same
+      // pathname. Overwrite is what makes that retry idempotent instead of
+      // failing on an existing blob and wedging the archive.
+      allowOverwrite: true,
       token: process.env.BLOB_READ_WRITE_TOKEN,
     })
   }

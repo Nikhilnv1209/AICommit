@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { prisma } from '@/prisma/client'
 import { logInfo } from './logger'
@@ -8,8 +9,9 @@ import { getAuditSink } from './audit-sink'
  * compressed NDJSON files.
  *
  * Order matters: rows are uploaded first and deleted only after a successful
- * write, so a failed archive never loses the trail. The trade-off is
- * at-least-once: a crash between upload and delete can duplicate a batch.
+ * write, so a failed archive never loses the trail. Batch names are derived
+ * from the row ids and uploads overwrite, so a retry after a crash rewrites
+ * the same object instead of duplicating it.
  */
 
 export interface ArchiveOptions {
@@ -29,6 +31,20 @@ export interface ArchiveResult {
 const DEFAULT_RETENTION_DAYS = 90
 const DEFAULT_BATCH_SIZE = 1000
 const MAX_BATCH_SIZE = 5000
+
+/**
+ * Deterministic object name for a batch: same rows -> same path, so a retried
+ * upload overwrites its own file instead of producing a second copy.
+ */
+export function buildArchivePathname(rows: Array<{ id: string; createdAt: Date }>): string {
+  const day = rows[0].createdAt.toISOString().slice(0, 10)
+  const hash = createHash('sha256')
+    .update(rows.map((row) => row.id).join(','))
+    .digest('hex')
+    .slice(0, 16)
+
+  return `audit/${day}/audit-${hash}.ndjson.gz`
+}
 
 export async function archiveAuditLogs(options: ArchiveOptions = {}): Promise<ArchiveResult> {
   const retentionDays = options.retentionDays ?? Number(process.env.AUDIT_RETENTION_DAYS ?? DEFAULT_RETENTION_DAYS)
@@ -52,10 +68,7 @@ export async function archiveAuditLogs(options: ArchiveOptions = {}): Promise<Ar
     const ndjson = rows.map((row) => JSON.stringify(row)).join('\n') + '\n'
     const compressed = gzipSync(Buffer.from(ndjson, 'utf8'))
 
-    const day = rows[0].createdAt.toISOString().slice(0, 10)
-    const first = rows[0].id.slice(-8)
-    const last = rows[rows.length - 1].id.slice(-8)
-    const pathname = `audit/${day}/audit-${first}-${last}.ndjson.gz`
+    const pathname = buildArchivePathname(rows)
 
     await sink.put(pathname, compressed)
     files.push(pathname)
