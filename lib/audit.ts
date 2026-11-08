@@ -3,6 +3,12 @@ import { headers } from 'next/headers'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/prisma/client'
 import { logWarning } from './logger'
+import {
+  AUDIT_ACTIONS,
+  type AuditAction,
+  type AuditSource,
+  type AuditStatus,
+} from './audit-actions'
 
 /**
  * Append-only audit trail.
@@ -12,25 +18,8 @@ import { logWarning } from './logger'
  * swallowed: an audit problem must not fail the user's action.
  */
 
-export const AUDIT_ACTIONS = {
-  USER_SYNC: 'user.sync',
-  PROJECT_CREATE: 'project.create',
-  PROJECT_ARCHIVE: 'project.archive',
-  PROJECT_JOIN: 'project.join',
-  PROJECT_REINDEX: 'project.reindex',
-  AI_CONFIG_SAVE: 'ai_config.save',
-  AI_CONFIG_DELETE: 'ai_config.delete',
-  MEETING_CREATE: 'meeting.create',
-  MEETING_DELETE: 'meeting.delete',
-  MEETING_PROCESS: 'meeting.process',
-  CREDIT_PURCHASE: 'credit.purchase',
-  CONVERSATION_DELETE: 'conversation.delete',
-  MESSAGE_EDIT: 'message.edit',
-} as const
-
-export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS]
-export type AuditStatus = 'success' | 'failure'
-export type AuditSource = 'action' | 'api' | 'webhook' | 'system' | 'cron'
+export { AUDIT_ACTIONS }
+export type { AuditAction, AuditStatus, AuditSource }
 
 export interface AuditRequestContext {
   ip?: string | null

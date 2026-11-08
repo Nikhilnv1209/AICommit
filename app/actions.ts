@@ -17,6 +17,8 @@ import { getIndexingProgress as getProgress, resetIndexing } from "@/lib/indexin
 import { indexingManager } from "@/lib/indexing-manager";
 import { buildGraph, type GraphType } from "@/lib/graph-extraction";
 import { AUDIT_ACTIONS, recordAudit } from "@/lib/audit";
+import { type GetAuditLogsInput, type GetAuditLogsResult } from "@/lib/audit-actions";
+import { fetchAuditLogs } from "@/lib/audit-query";
 
 function auditHost(url?: string | null): string | null {
   try {
@@ -413,6 +415,20 @@ async function pollCommitsAndRefreshCodebase(projectId: string, githubUrl: strin
   }
 
   return result
+}
+
+export async function getAuditLogs(input: GetAuditLogsInput): Promise<GetAuditLogsResult> {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return { success: false, events: [], nextCursor: null, error: 'Not authenticated' };
+    }
+
+    return await fetchAuditLogs(userId, input);
+  } catch (error) {
+    logError('AuditLogs', 'Error fetching audit logs:', error);
+    return { success: false, events: [], nextCursor: null, error: 'Failed to load audit logs' };
+  }
 }
 
 export async function getProjectCommits(projectId: string, githubUrl?: string) {
