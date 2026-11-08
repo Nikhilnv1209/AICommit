@@ -99,6 +99,9 @@ CLOUDINARY_*            # Cloudinary configuration
 ASSEMBLYAI_API_KEY     # AssemblyAI API key
 STRIPE_SECRET_KEY      # Stripe secret key
 PRISMA_DRIVER          # Optional: "pg" to use a driver adapter instead of the Prisma query engine
+BLOB_READ_WRITE_TOKEN  # Optional: archive audit logs to Vercel Blob (falls back to ./logs locally)
+CRON_SECRET            # Protects /api/cron/* routes (Vercel sends it as a bearer token)
+AUDIT_RETENTION_DAYS   # Optional: days audit logs stay in Postgres (default 90)
 ```
 
 ## Documentation

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-import { prisma } from "@/prisma/client";
+import { prisma } from "@/prisma/client"
+import { AUDIT_ACTIONS, recordAudit } from "@/lib/audit";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-08-27.basil"
@@ -63,6 +64,18 @@ export async function POST(req: NextRequest) {
     } catch (error: any) {
         return new NextResponse(`Database Error: ${error.message}`, { status: 500 });
     }
+
+    recordAudit({
+      action: AUDIT_ACTIONS.CREDIT_PURCHASE,
+      actorId: userId,
+      source: "webhook",
+      target: session.id,
+      metadata: {
+        credits,
+        amountTotal: session.amount_total,
+        currency: session.currency,
+      },
+    });
   }
 
   return new NextResponse(null, { status: 200 });

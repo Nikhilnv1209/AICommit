@@ -1,6 +1,7 @@
 import { prisma } from "@/prisma/client"
 import { auth, clerkClient } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
+import { AUDIT_ACTIONS, recordAudit } from "@/lib/audit"
 
 const SyncUser = async () => {
   const { userId } = await auth()
@@ -32,6 +33,13 @@ const SyncUser = async () => {
       lastName: user.lastName as string,
       imageUrl: user.imageUrl,
     }
+  })
+
+  recordAudit({
+    action: AUDIT_ACTIONS.USER_SYNC,
+    actorId: user.id,
+    target: user.emailAddresses[0].emailAddress,
+    metadata: { source: "clerk" },
   })
 
   return redirect("/dashboard")

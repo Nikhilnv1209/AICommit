@@ -265,3 +265,28 @@ model CreditTransaction {
   @@index([userId, createdAt])
   @@index([refId])
 }
+
+/// Append-only audit trail. Deliberately has no foreign keys: entries must
+/// survive deletion of the user or project they describe.
+model AuditLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  action    String
+  status    String
+  source    String
+
+  actorId   String?
+  projectId String?
+  target    String?
+
+  ip        String?
+  userAgent String?
+  error     String?
+  metadata  Json?
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([action, createdAt])
+}

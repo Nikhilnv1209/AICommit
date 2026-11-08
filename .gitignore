@@ -42,3 +42,6 @@ next-env.d.ts
 
 *.mp3
 .kilo*
+
+# Local audit-log archives (production uses blob storage)
+logs/

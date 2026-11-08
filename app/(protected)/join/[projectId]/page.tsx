@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { prisma } from "@/prisma/client";
+import { AUDIT_ACTIONS, recordAudit } from "@/lib/audit";
 
 const JoinProjectPage = async ({ params }: { params: { projectId: string } }) => {
   const { userId } = await auth();
@@ -50,6 +51,13 @@ const JoinProjectPage = async ({ params }: { params: { projectId: string } }) =>
       userId: userId,
       projectId: params.projectId,
     },
+  });
+
+  recordAudit({
+    action: AUDIT_ACTIONS.PROJECT_JOIN,
+    actorId: userId,
+    projectId: params.projectId,
+    target: project.name,
   });
 
   // Redirect to the dashboard.

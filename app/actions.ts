@@ -16,6 +16,15 @@ import type { UploadApiResponse } from "cloudinary";
 import { getIndexingProgress as getProgress, resetIndexing } from "@/lib/indexing-progress";
 import { indexingManager } from "@/lib/indexing-manager";
 import { buildGraph, type GraphType } from "@/lib/graph-extraction";
+import { AUDIT_ACTIONS, recordAudit } from "@/lib/audit";
+
+function auditHost(url?: string | null): string | null {
+  try {
+    return url ? new URL(url).host : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function askQuestion(question: string, projectId: string) {
   const stream = createStreamableValue();
@@ -244,6 +253,14 @@ export async function reindexProject(projectId: string) {
       return { error: result.message };
     }
 
+    recordAudit({
+      action: AUDIT_ACTIONS.PROJECT_REINDEX,
+      actorId: userId,
+      projectId,
+      target: project.name,
+      metadata: { repoHost: auditHost(project.githubUrl) },
+    });
+
     return { success: true, message: result.message };
   } catch (error: any) {
     return { error: error?.message || 'Failed to reindex project' };
@@ -289,6 +306,17 @@ export async function submitCreateForm(formdata: TFormData) {
     });
 
     if (!project) throw new Error("Failed to create the project.");
+
+    recordAudit({
+      action: AUDIT_ACTIONS.PROJECT_CREATE,
+      actorId: userId,
+      projectId: project.id,
+      target: project.name,
+      metadata: {
+        repoHost: auditHost(project.githubUrl),
+        privateRepo: Boolean(project.githubToken),
+      },
+    });
 
     // Start indexing using IndexingManager
     // This handles isolation, progress tracking, and fault tolerance
@@ -461,6 +489,14 @@ export async function archiveProject(projectId: string) {
       },
     });
 
+    recordAudit({
+      action: AUDIT_ACTIONS.PROJECT_ARCHIVE,
+      actorId: userId,
+      projectId: archivedProject.id,
+      target: archivedProject.name,
+      metadata: { repoHost: auditHost(archivedProject.githubUrl) },
+    });
+
     return { success: true, project: archivedProject };
   } catch (error: any) {
     // Prisma throws an error if the record to update is not found.
@@ -599,6 +635,14 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
       },
     });
 
+    recordAudit({
+      action: AUDIT_ACTIONS.MEETING_CREATE,
+      actorId: userId,
+      projectId,
+      target: meeting.id,
+      metadata: { name },
+    });
+
     return { success: true, meeting };
   } catch (error: any) {
     logError('CreateMeeting', 'Error creating meeting:', error);
@@ -674,6 +718,12 @@ export async function deleteMeeting(meetingId: string, meetingUrl: string) {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
+    // Capture the owning project for the audit trail before the row is gone.
+    const meeting = await prisma.meeting.findFirst({
+      where: { id: meetingId, project: { userToProject: { some: { userId } } } },
+      select: { projectId: true },
+    });
+
     // By performing deletes within a transaction, we make the operation atomic.
     // If any part fails, the entire transaction is rolled back.
     await prisma.$transaction([
@@ -709,6 +759,13 @@ export async function deleteMeeting(meetingId: string, meetingUrl: string) {
         // For now, we'll just log it and still return success for the DB deletion.
       }
     }
+
+    recordAudit({
+      action: AUDIT_ACTIONS.MEETING_DELETE,
+      actorId: userId,
+      projectId: meeting?.projectId ?? null,
+      target: meetingId,
+    });
 
     return { success: true };
   } catch (error: any) {
@@ -855,6 +912,13 @@ export async function saveAIConfigSection(input: {
       create: { userId, purpose, baseUrl, apiKeyEnc, model },
     });
 
+    recordAudit({
+      action: AUDIT_ACTIONS.AI_CONFIG_SAVE,
+      actorId: userId,
+      target: purpose,
+      metadata: { purpose, model, baseUrlHost: auditHost(baseUrl), keyReplaced: Boolean(apiKey) },
+    });
+
     return { success: true };
   } catch (error: any) {
     logError('SaveAIConfig', 'Error saving AI config:', error);
@@ -871,6 +935,13 @@ export async function deleteAIConfigSection(input: {
 
     await prisma.userAIConfig.deleteMany({
       where: { userId, purpose: input.purpose },
+    });
+
+    recordAudit({
+      action: AUDIT_ACTIONS.AI_CONFIG_DELETE,
+      actorId: userId,
+      target: input.purpose,
+      metadata: { purpose: input.purpose },
     });
 
     return { success: true };
@@ -1011,6 +1082,11 @@ export async function deleteConversation(conversationId: string) {
     const { userId } = await auth();
     if (!userId) throw new Error("User not found.");
 
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { projectId: true },
+    });
+
     // Soft delete: mark as deleted immediately
     await prisma.conversation.update({
       where: { id: conversationId },
@@ -1027,6 +1103,13 @@ export async function deleteConversation(conversationId: string) {
         // Already deleted or doesn't exist — ignore
       }
     }, 30_000);
+
+    recordAudit({
+      action: AUDIT_ACTIONS.CONVERSATION_DELETE,
+      actorId: userId,
+      projectId: conversation?.projectId ?? null,
+      target: conversationId,
+    });
 
     return { success: true };
   } catch (error: any) {
@@ -1292,6 +1375,14 @@ export async function editMessage(
     // Create new user message with edited content
     await prisma.message.create({
       data: { conversationId, role: "user", content: newContent },
+    });
+
+    recordAudit({
+      action: AUDIT_ACTIONS.MESSAGE_EDIT,
+      actorId: userId,
+      projectId,
+      target: messageId,
+      metadata: { conversationId },
     });
 
     return await buildAndStreamResponse(conversationId, newContent, projectId, userId);

@@ -27,6 +27,7 @@
     "@tanstack/react-query": "^5.66.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@uiw/react-md-editor": "^4.0.5",
+    "@vercel/blob": "^2.8.2",
     "assemblyai": "^4.15.0",
     "axios": "^1.7.9",
     "class-variance-authority": "^0.7.1",

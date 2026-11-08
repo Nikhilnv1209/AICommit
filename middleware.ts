@@ -1,6 +1,13 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
-const isPublicRoute = createRouteMatcher(['/', '/sign-in(.*)', '/sign-up(.*)', '/api/stripe/webhook'])
+const isPublicRoute = createRouteMatcher([
+  '/',
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/api/stripe/webhook',
+  // Cron routes authenticate with CRON_SECRET instead of a session.
+  '/api/cron(.*)',
+])
 
 export default clerkMiddleware(async (auth, req) => {
   if (isPublicRoute(req)) {
