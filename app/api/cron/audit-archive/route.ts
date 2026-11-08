@@ -28,10 +28,8 @@ export async function GET(request: Request) {
   try {
     const result = await archiveAuditLogs()
     return NextResponse.json({ ok: true, ...result })
-  } catch (error: any) {
-    return NextResponse.json(
-      { ok: false, error: error?.message ?? String(error) },
-      { status: 500 }
-    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return NextResponse.json({ ok: false, error: message }, { status: 500 })
   }
 }

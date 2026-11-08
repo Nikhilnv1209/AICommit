@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/prisma/client";
 import { AUDIT_ACTIONS, recordAudit } from "@/lib/audit";
 
-const JoinProjectPage = async ({ params }: { params: { projectId: string } }) => {
+const JoinProjectPage = async ({ params }: { params: Promise<{ projectId: string }> }) => {
+  const { projectId } = await params;
   const { userId } = await auth();
   const user = await currentUser();
 
@@ -30,7 +31,7 @@ const JoinProjectPage = async ({ params }: { params: { projectId: string } }) =>
 
   // Check if project exists.
   const project = await prisma.project.findUnique({
-    where: { id: params.projectId },
+    where: { id: projectId },
   });
 
   if (!project) {
@@ -43,20 +44,20 @@ const JoinProjectPage = async ({ params }: { params: { projectId: string } }) =>
     where: {
       userId_projectId: {
         userId: userId,
-        projectId: params.projectId,
+        projectId: projectId,
       },
     },
     update: {}, // No update needed if it exists
     create: {
       userId: userId,
-      projectId: params.projectId,
+      projectId: projectId,
     },
   });
 
   recordAudit({
     action: AUDIT_ACTIONS.PROJECT_JOIN,
     actorId: userId,
-    projectId: params.projectId,
+    projectId: projectId,
     target: project.name,
   });
 

@@ -147,8 +147,9 @@ async function persist(payload: AuditPayload, request: AuditRequestContext): Pro
         metadata: payload.metadata === null ? Prisma.DbNull : (payload.metadata as Prisma.InputJsonValue),
       },
     })
-  } catch (error: any) {
-    logWarning('Audit', `Failed to write audit log for ${payload.action}: ${error?.message ?? error}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    logWarning('Audit', `Failed to write audit log for ${payload.action}: ${message}`)
   }
 }
 
