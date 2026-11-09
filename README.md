@@ -102,6 +102,7 @@ PRISMA_DRIVER          # Optional: "pg" to use a driver adapter instead of the P
 BLOB_READ_WRITE_TOKEN  # Optional: archive audit logs to Vercel Blob (falls back to ./logs locally)
 CRON_SECRET            # Protects /api/cron/* routes (Vercel sends it as a bearer token)
 AUDIT_RETENTION_DAYS   # Optional: days audit logs stay in Postgres (default 90)
+NEXT_PUBLIC_STRIPE_CURRENCY  # Optional ISO code for checkout currency (default: usd)
 ```
 
 ## Documentation

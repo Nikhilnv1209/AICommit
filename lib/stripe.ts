@@ -1,10 +1,15 @@
 "use server";
 import Stripe from "stripe";
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { currencyMultiplier, normalizeCurrency } from "./currency";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-08-27.basil",
 });
+
+// Stripe accepts any 3-letter ISO code; configure via NEXT_PUBLIC_ so the
+// billing screen can format the same currency without a round-trip.
+const CURRENCY = normalizeCurrency(process.env.NEXT_PUBLIC_STRIPE_CURRENCY);
 
 export async function createCheckoutSession(credits: number) {
   const { userId } = await auth();
@@ -20,13 +25,14 @@ export async function createCheckoutSession(credits: number) {
     line_items: [
       {
         price_data: {
-          currency: "usd",
+          currency: CURRENCY,
           product_data: {
             name: `${credits} AICommit Credits`,
             description:
               "Credits for AICommit to generate commit messages and more.",
           },
-          unit_amount: Math.floor((credits / 50) * 100),
+          // 50 credits = 1 major unit; convert to the currency's smallest unit.
+          unit_amount: Math.round((credits / 50) * currencyMultiplier(CURRENCY)),
         },
         quantity: 1,
       },

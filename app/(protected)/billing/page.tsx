@@ -2,6 +2,7 @@
 
 import { getUserCredits } from "@/app/actions";
 import { createCheckoutSession } from "@/lib/stripe";
+import { formatCreditPrice } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Info, CreditCard } from "lucide-react";
@@ -39,7 +40,7 @@ const BillingPage = () => {
     createSession(creditsToBuy);
   };
 
-  const calculatedPrice = (creditsToBuy / 50).toFixed(2);
+  const priceLabel = formatCreditPrice(creditsToBuy, process.env.NEXT_PUBLIC_STRIPE_CURRENCY) ?? "—";
 
   return (
     <div className="w-full">
@@ -63,7 +64,7 @@ const BillingPage = () => {
                 <p className="font-mono text-3xl font-medium tabular-nums">{creditsToBuy}</p>
                 <p className="mt-1 font-mono text-[11px] text-muted-foreground">credits</p>
                 <p className="mt-4 font-mono text-4xl font-medium tabular-nums text-primary">
-                  ${calculatedPrice}
+                  {priceLabel}
                 </p>
               </div>
             </div>
