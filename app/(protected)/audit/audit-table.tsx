@@ -4,26 +4,56 @@ import Image from "next/image";
 import { AUDIT_ACTION_LABELS, type AuditAction, type AuditLogView } from "@/lib/audit-actions";
 import { CheckCircle2, ChevronDown, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatAmountFromMinorUnits } from "@/lib/currency";
 
 const SUMMARY_KEYS = [
   "purpose",
   "model",
   "trigger",
   "commits",
-  "credits",
   "issuesCount",
   "repoHost",
   "name",
   "keyReplaced",
 ];
 
+function firstNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
 function summarizeMetadata(metadata: unknown): string[] {
   if (!metadata || typeof metadata !== "object") return [];
   const record = metadata as Record<string, unknown>;
+  const summary: string[] = [];
 
-  return SUMMARY_KEYS.filter((key) => record[key] !== undefined).map(
-    (key) => `${key}: ${String(record[key])}`
-  );
+  // Charged amount is stored in the smallest currency unit, so format it with
+  // the currency Stripe reported. Older rows used amountMinor/amountTotal.
+  const amountMinor = firstNumber(record.chargedAmountMinor, record.amountMinor, record.amountTotal);
+  const currency =
+    typeof record.chargedCurrency === "string"
+      ? record.chargedCurrency
+      : typeof record.currency === "string"
+        ? record.currency
+        : null;
+
+  if (amountMinor !== null) {
+    const formatted = formatAmountFromMinorUnits(amountMinor, currency);
+    summary.push(formatted ? `charged: ${formatted}` : `charged: ${amountMinor} (minor units${currency ? `, ${currency}` : ""})`);
+  }
+
+  const credits = firstNumber(record.creditsGranted, record.credits);
+  if (credits !== null) summary.push(`credits: ${credits}`);
+
+  for (const key of SUMMARY_KEYS) {
+    if (record[key] !== undefined) {
+      summary.push(`${key}: ${String(record[key])}`);
+    }
+  }
+
+  return summary;
 }
 
 function actorLabel(event: AuditLogView): string {

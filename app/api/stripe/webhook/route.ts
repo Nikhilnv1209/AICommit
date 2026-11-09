@@ -20,8 +20,9 @@ export async function POST(req: NextRequest) {
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!
     );
-  } catch (error: any) {
-    return new NextResponse(`Webhook Error: ${error.message}`, { status: 400 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new NextResponse(`Webhook Error: ${message}`, { status: 400 });
   }
 
   if (event.type === "checkout.session.completed") {
@@ -61,19 +62,22 @@ export async function POST(req: NextRequest) {
           },
         }),
       ]);
-    } catch (error: any) {
-        return new NextResponse(`Database Error: ${error.message}`, { status: 500 });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return new NextResponse(`Database Error: ${message}`, { status: 500 });
     }
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.CREDIT_PURCHASE,
       actorId: userId,
       source: "webhook",
       target: session.id,
       metadata: {
-        credits,
-        amountTotal: session.amount_total,
-        currency: session.currency,
+        // "charged" = this checkout's amount, not the account balance.
+        // Stripe always reports the smallest currency unit (cents, paise...).
+        creditsGranted: credits,
+        chargedAmountMinor: session.amount_total,
+        chargedCurrency: session.currency,
       },
     });
   }
