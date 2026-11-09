@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getAuditLogs } from "@/app/actions";
 import useProject from "@/hooks/use-project";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -44,6 +44,12 @@ const AuditPage = () => {
   const [range, setRange] = useState<AuditRange>("7d");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // The selected project comes from localStorage, which does not exist during
+  // SSR. Rendering the real tree on the first client pass would mismatch the
+  // server HTML, so both sides render the skeleton until after hydration.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const query = useInfiniteQuery({
     queryKey: ["audit-logs", scope, projectId, action, status, range],
     queryFn: ({ pageParam }) =>
@@ -57,7 +63,7 @@ const AuditPage = () => {
       }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: scope === "personal" || Boolean(projectId),
+    enabled: mounted && (scope === "personal" || Boolean(projectId)),
     staleTime: 15_000,
   });
 
@@ -67,8 +73,9 @@ const AuditPage = () => {
   );
   const error = query.data?.pages.find((page) => !page.success)?.error;
 
-  const subtitle =
-    scope === "project"
+  const subtitle = !mounted
+    ? "// loading activity…"
+    : scope === "project"
       ? project
         ? `// activity in ${project.name}`
         : "// select a project to see its activity"
@@ -117,7 +124,9 @@ const AuditPage = () => {
       </div>
 
       <div className="mt-5">
-        {scope === "project" && !projectId ? (
+        {!mounted ? (
+          <TableSkeleton />
+        ) : scope === "project" && !projectId ? (
           <EmptyState
             title="No project selected"
             hint="Pick a project in the sidebar to see the activity of its members."
