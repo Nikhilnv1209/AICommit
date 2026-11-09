@@ -17,6 +17,7 @@ AICommit integrates with GitHub to provide AI-powered insights into your codebas
 - Intelligent commit diff summarization using Google Gemini AI
 - Source code embeddings for semantic search
 - Question-answering system based on your codebase
+- Interactive code graph of file dependencies and call graphs, built from tree-sitter ASTs
 
 ### Meeting Transcription & Analysis
 - Upload meeting recordings via Cloudinary

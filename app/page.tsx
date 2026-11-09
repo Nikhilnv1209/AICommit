@@ -8,7 +8,7 @@ import {
   Mic,
   Search,
   Users,
-  BarChart3,
+  Network,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -81,7 +81,7 @@ export default async function Home() {
           <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-4 duration-700">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 font-mono text-[11px] text-white/60">
               <span className="h-1.5 w-1.5 rounded-full bg-[#bef264]" />
-              v1.0 · commit summaries + meeting-to-issue
+              v1.1 · code graph + commit summaries + meetings
             </div>
             <h1 className="mt-6 font-mono text-4xl font-medium leading-[1.08] tracking-tight sm:text-5xl lg:text-[56px]">
               Stop reading commits.
@@ -89,8 +89,8 @@ export default async function Home() {
               <span className="text-white/40">Start</span> understanding them.
             </h1>
             <p className="mt-6 max-w-md text-[15px] leading-relaxed text-white/55">
-              AICommit indexes your GitHub repositories and turns them into searchable, conversational
-              knowledge — across code, commits, and meetings.
+              AICommit indexes your GitHub repositories, maps how the code fits together, and turns it
+              into searchable, conversational knowledge — across code, commits, and meetings.
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <Link href={user ? "/dashboard" : "/sign-up"}>
@@ -116,6 +116,8 @@ export default async function Home() {
               <span>github-native</span>
               <span className="text-white/15">/</span>
               <span>semantic search</span>
+              <span className="text-white/15">/</span>
+              <span>code graph</span>
               <span className="text-white/15">/</span>
               <span>meeting → issues</span>
               <span className="text-white/15">/</span>
@@ -176,9 +178,9 @@ export default async function Home() {
           />
           <FeatureRow
             index="06"
-            icon={<BarChart3 className="h-4 w-4" />}
-            title="Code analytics"
-            description="Track hotspots, coverage and churn to prioritize work with data."
+            icon={<Network className="h-4 w-4" />}
+            title="Code graph"
+            description="Explore file dependencies and call graphs generated from real ASTs — TypeScript, Kotlin, Java, Python, Go, Rust and PHP."
             delay={300}
           />
         </div>
@@ -287,7 +289,11 @@ function TerminalPanel() {
           <span className="text-[#bef264]">✓</span>{" "}
           <span className="text-white/70">summarized 1,284 commit diffs</span>
         </div>
-        <div className="motion-safe:animate-in motion-safe:fade-in duration-500 motion-safe:[animation-delay:1300ms]">
+        <div className="motion-safe:animate-in motion-safe:fade-in duration-500 motion-safe:[animation-delay:1200ms]">
+          <span className="text-[#bef264]">✓</span>{" "}
+          <span className="text-white/70">mapped 412 files · 1,842 edges</span>
+        </div>
+        <div className="motion-safe:animate-in motion-safe:fade-in duration-500 motion-safe:[animation-delay:1500ms]">
           <span className="text-[#bef264]">→</span>{" "}
           <span className="text-[#bef264]">ready in 38s · ask anything</span>
         </div>
@@ -358,6 +364,12 @@ function PreviewPanel() {
                 q&amp;a
               </TabsTrigger>
               <TabsTrigger
+                value="graph"
+                className="rounded-[5px] px-3 py-1 font-mono text-xs text-white/50 data-[state=active]:bg-white/[0.07] data-[state=active]:text-white data-[state=active]:shadow-none"
+              >
+                graph
+              </TabsTrigger>
+              <TabsTrigger
                 value="summary"
                 className="rounded-[5px] px-3 py-1 font-mono text-xs text-white/50 data-[state=active]:bg-white/[0.07] data-[state=active]:text-white data-[state=active]:shadow-none"
               >
@@ -385,6 +397,10 @@ function PreviewPanel() {
             </ul>
           </TabsContent>
 
+          <TabsContent value="graph" className="mt-4">
+            <GraphPreview />
+          </TabsContent>
+
           <TabsContent value="summary" className="mt-4">
             <ul className="space-y-1.5">
               <ListItem tag="feat" title="AI-powered repository insights" />
@@ -394,6 +410,75 @@ function PreviewPanel() {
             </ul>
           </TabsContent>
         </Tabs>
+      </div>
+    </div>
+  );
+}
+
+function GraphPreview() {
+  const nodes = [
+    { label: "app.tsx", x: 52, y: 38, color: "#3178c6" },
+    { label: "api/route.ts", x: 178, y: 26, color: "#3178c6" },
+    { label: "pages/qa.tsx", x: 288, y: 46, color: "#3178c6", anchor: "end" as const },
+    { label: "lib/auth.ts", x: 118, y: 100, color: "#3178c6" },
+    { label: "lib/db.ts", x: 232, y: 96, color: "#3776ab" },
+    { label: "lib/ai.ts", x: 58, y: 152, color: "#3776ab" },
+    { label: "lib/graph.ts", x: 178, y: 158, color: "#7f52ff" },
+  ];
+
+  const edges: Array<[number, number]> = [
+    [0, 1], [1, 2], [0, 3], [1, 3], [3, 4], [3, 5], [5, 6], [3, 6], [6, 4],
+  ];
+
+  return (
+    <div className="rounded-md border border-white/[0.06] bg-white/[0.02]">
+      <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2">
+        <div className="flex items-center gap-1 font-mono text-[10px]">
+          <span className="rounded bg-white/[0.07] px-2 py-0.5 text-white/70">file dependencies</span>
+          <span className="px-2 py-0.5 text-white/30">call graph</span>
+        </div>
+        <span className="font-mono text-[10px] text-white/25">9 languages</span>
+      </div>
+
+      <svg viewBox="0 0 340 190" className="h-[180px] w-full" role="img" aria-label="File dependency graph">
+        {edges.map(([from, to], index) => (
+          <line
+            key={index}
+            x1={nodes[from].x}
+            y1={nodes[from].y}
+            x2={nodes[to].x}
+            y2={nodes[to].y}
+            stroke="rgba(255,255,255,0.14)"
+            strokeWidth="1"
+          />
+        ))}
+        {nodes.map((node) => (
+          <g key={node.label}>
+            <circle cx={node.x} cy={node.y} r="4.5" fill={node.color} />
+            <text
+              x={node.anchor === "end" ? node.x - 8 : node.x + 8}
+              y={node.y + 3}
+              textAnchor={node.anchor === "end" ? "end" : "start"}
+              fill="rgba(255,255,255,0.5)"
+              fontSize="8"
+              fontFamily="ui-monospace, SFMono-Regular, monospace"
+            >
+              {node.label}
+            </text>
+          </g>
+        ))}
+      </svg>
+
+      <div className="flex items-center gap-3 border-t border-white/[0.06] px-3 py-2 font-mono text-[10px] text-white/30">
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#3178c6]" />typescript
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#3776ab]" />python
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#7f52ff]" />kotlin
+        </span>
       </div>
     </div>
   );
@@ -429,10 +514,10 @@ function ActivityPanel() {
             when="26m"
           />
           <ActivityRow
-            icon={<BarChart3 className="h-3.5 w-3.5" />}
+            icon={<Network className="h-3.5 w-3.5" />}
             who="Mia"
-            what="ran analytics"
-            extra="commit coverage"
+            what="opened graph"
+            extra="auth module"
             when="1h"
           />
         </ul>

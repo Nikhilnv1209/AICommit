@@ -24,7 +24,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AICommit",
-  description: "Welcome to AICommit, a platform for AI enthusiasts. Helps to manage the github repositories and projects.",
+  description: "Index GitHub repositories, summarize commits, map file and call dependencies, and turn meetings into issues.",
 };
 
 export default function RootLayout({
