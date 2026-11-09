@@ -3,6 +3,8 @@ import { indexGithubRepo } from './github-loader';
 import { pollCommits, getRepoCommits, PollCommitsProgress } from './github';
 import { prisma } from '@/prisma/client';
 import crypto from 'crypto';
+import { AUDIT_ACTIONS, recordAudit } from './audit';
+import type { AuditSource } from './audit-actions';
 
 // Unique server instance ID
 const SERVER_ID = crypto.randomUUID();
@@ -11,6 +13,18 @@ const SERVER_ID = crypto.randomUUID();
 const INDEXING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const HEARTBEAT_INTERVAL_MS = 30 * 1000; // 30 seconds
 
+/**
+ * Context used to attribute the indexing outcome in the audit trail.
+ * Jobs started without it (initial project indexing, resumed jobs) are not
+ * audited, so they do not duplicate the project's creation event.
+ */
+export interface IndexingAuditContext {
+  actorId?: string | null;
+  source?: AuditSource;
+  trigger?: string;
+  metadata?: Record<string, unknown>;
+}
+
 // Track active indexing jobs in memory
 const activeIndexingJobs = new Map<string, {
   projectId: string;
@@ -18,6 +32,7 @@ const activeIndexingJobs = new Map<string, {
   githubToken?: string;
   startTime: Date;
   abortController: AbortController;
+  audit?: IndexingAuditContext;
 }>();
 
 type IndexStatus = 'IDLE' | 'INDEXING' | 'COMPLETED' | 'ERROR' | 'TIMEOUT';
@@ -62,7 +77,8 @@ export class IndexingManager {
   public async startIndexing(
     projectId: string, 
     githubUrl: string, 
-    githubToken?: string
+    githubToken?: string,
+    audit?: IndexingAuditContext
   ): Promise<{ success: boolean; message: string }> {
     // Check if already indexing in this server instance
     if (activeIndexingJobs.has(projectId)) {
@@ -97,6 +113,7 @@ export class IndexingManager {
       githubToken,
       startTime: new Date(),
       abortController,
+      audit,
     });
 
     // Update database to mark as indexing with this server
@@ -124,7 +141,7 @@ export class IndexingManager {
     });
 
     // Start indexing in background
-    this.runIndexing(projectId, githubUrl, githubToken, abortController).catch((error) => {
+    this.runIndexing(projectId, githubUrl, githubToken, abortController, audit).catch((error) => {
       logError('IndexingManager', `Unexpected error during indexing for ${projectId}:`, error);
       this.markAsError(projectId, error?.message || 'Unknown error');
     });
@@ -398,7 +415,8 @@ export class IndexingManager {
     projectId: string,
     githubUrl: string,
     githubToken: string | undefined,
-    abortController: AbortController
+    abortController: AbortController,
+    audit?: IndexingAuditContext
   ): Promise<void> {
     let commitSummary = '';
     
@@ -445,13 +463,54 @@ export class IndexingManager {
       // Mark as completed with commit summary
       await this.markAsCompleted(projectId, result.success, commitSummary, currentSha);
 
-    } catch (error: any) {
+      if (audit) {
+        await recordAudit.background({
+          action: AUDIT_ACTIONS.PROJECT_REINDEX,
+          status: 'success',
+          source: audit.source ?? 'action',
+          actorId: audit.actorId ?? null,
+          projectId,
+          metadata: {
+            trigger: audit.trigger,
+            files: result.success,
+            commits: unprocessedCount,
+            ...audit.metadata,
+          },
+        });
+      }
+    } catch (error) {
       if (abortController.signal.aborted) {
         logInfo('IndexingManager', `Indexing cancelled for project ${projectId}`);
+
+        if (audit) {
+          await recordAudit.background({
+            action: AUDIT_ACTIONS.PROJECT_REINDEX,
+            status: 'failure',
+            source: audit.source ?? 'action',
+            actorId: audit.actorId ?? null,
+            projectId,
+            error: 'Indexing was cancelled',
+            metadata: { trigger: audit.trigger, ...audit.metadata },
+          });
+        }
+
         return;
       }
 
-      await this.markAsError(projectId, error?.message || 'Unknown error during indexing');
+      const message = error instanceof Error ? error.message : 'Unknown error during indexing';
+      await this.markAsError(projectId, message);
+
+      if (audit) {
+        await recordAudit.background({
+          action: AUDIT_ACTIONS.PROJECT_REINDEX,
+          status: 'failure',
+          source: audit.source ?? 'action',
+          actorId: audit.actorId ?? null,
+          projectId,
+          error: message,
+          metadata: { trigger: audit.trigger, ...audit.metadata },
+        });
+      }
     }
   }
 

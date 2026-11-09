@@ -143,20 +143,36 @@ async function persist(payload: AuditPayload, request: AuditRequestContext): Pro
 }
 
 /**
- * Record an audit event. Fire-and-forget: never throws, never delays the
- * response. Falls back to a detached promise outside a request scope.
+ * Audit writer.
+ *
+ * - `recordAudit.request(event)` — request paths (server actions, pages,
+ *   route handlers). Schedules the insert with `after()` so it adds no
+ *   latency; it needs a live request.
+ * - `recordAudit.background(event)` — work that outlives the response
+ *   (indexing jobs, cron, system tasks). Awaits the insert directly, because
+ *   `after()` has no request to attach to once the action has answered.
+ *
+ * Both share payload building, redaction and persistence.
  */
-export function recordAudit(event: AuditEvent): void {
-  const payload = buildAuditPayload(event)
+export const recordAudit = {
+  request(event: AuditEvent): void {
+    const payload = buildAuditPayload(event)
 
-  const run = async () => {
+    const run = async () => {
+      const request = event.request ?? (await auditRequestContext())
+      await persist(payload, request)
+    }
+
+    try {
+      after(run)
+    } catch {
+      void run()
+    }
+  },
+
+  async background(event: AuditEvent): Promise<void> {
+    const payload = buildAuditPayload(event)
     const request = event.request ?? (await auditRequestContext())
     await persist(payload, request)
-  }
-
-  try {
-    after(run)
-  } catch {
-    void run()
-  }
+  },
 }

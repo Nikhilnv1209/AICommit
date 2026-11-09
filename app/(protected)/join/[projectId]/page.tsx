@@ -35,7 +35,7 @@ const JoinProjectPage = async ({ params }: { params: Promise<{ projectId: string
   });
 
   if (!project) {
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.PROJECT_JOIN,
       status: "failure",
       actorId: userId,
@@ -61,7 +61,7 @@ const JoinProjectPage = async ({ params }: { params: Promise<{ projectId: string
     },
   });
 
-  recordAudit({
+  recordAudit.request({
     action: AUDIT_ACTIONS.PROJECT_JOIN,
     actorId: userId,
     projectId: projectId,

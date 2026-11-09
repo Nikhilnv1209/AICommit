@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       },
     });
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MEETING_PROCESS,
       actorId: userId,
       projectId,
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     logError('ProcessMeeting', 'Error processing meeting:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MEETING_PROCESS,
       status: "failure",
       actorId: userId,

@@ -250,11 +250,22 @@ export async function reindexProject(projectId: string) {
     // Reset indexing status
     await indexingManager.resetIndexing(projectId);
 
-    // Start indexing using IndexingManager
-    const result = await indexingManager.startIndexing(projectId, project.githubUrl!, project.githubToken || undefined);
+    // Start indexing using IndexingManager. The outcome is audited when the
+    // background job finishes, not here — starting is not success.
+    const result = await indexingManager.startIndexing(
+      projectId,
+      project.githubUrl!,
+      project.githubToken || undefined,
+      {
+        actorId: userId,
+        source: 'action',
+        trigger: 'manual',
+        metadata: { repoHost: auditHost(project.githubUrl) },
+      }
+    );
 
     if (!result.success) {
-      recordAudit({
+      recordAudit.request({
         action: AUDIT_ACTIONS.PROJECT_REINDEX,
         status: 'failure',
         actorId: auditUserId,
@@ -264,17 +275,9 @@ export async function reindexProject(projectId: string) {
       return { error: result.message };
     }
 
-    recordAudit({
-      action: AUDIT_ACTIONS.PROJECT_REINDEX,
-      actorId: userId,
-      projectId,
-      target: project.name,
-      metadata: { repoHost: auditHost(project.githubUrl) },
-    });
-
     return { success: true, message: result.message };
   } catch (error: any) {
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.PROJECT_REINDEX,
       status: 'failure',
       actorId: auditUserId,
@@ -329,7 +332,7 @@ export async function submitCreateForm(formdata: TFormData) {
     if (!project) throw new Error("Failed to create the project.");
     auditProjectId = project.id;
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.PROJECT_CREATE,
       actorId: userId,
       projectId: project.id,
@@ -350,7 +353,7 @@ export async function submitCreateForm(formdata: TFormData) {
     return { success: `Project "${project.name}" created successfully! Indexing has started in the background.${suffix}`, projectId: project.id };
   } catch (error: any) {
     logError('ProjectCreation', 'Error creating project:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.PROJECT_CREATE,
       status: 'failure',
       actorId: auditUserId,
@@ -401,16 +404,12 @@ async function pollCommitsAndRefreshCodebase(projectId: string, githubUrl: strin
   if (result.count > 0) {
     const status = await indexingManager.getStatus(projectId)
     if (!status.isActive) {
-      const started = await indexingManager.startIndexing(projectId, githubUrl)
-      if (started.success) {
-        recordAudit({
-          action: AUDIT_ACTIONS.PROJECT_REINDEX,
-          source: 'system',
-          actorId: null,
-          projectId,
-          metadata: { trigger: 'commits', commits: result.count },
-        })
-      }
+      await indexingManager.startIndexing(projectId, githubUrl, undefined, {
+        actorId: null,
+        source: 'system',
+        trigger: 'commits',
+        metadata: { commits: result.count },
+      })
     }
   }
 
@@ -543,7 +542,7 @@ export async function archiveProject(projectId: string) {
       },
     });
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.PROJECT_ARCHIVE,
       actorId: userId,
       projectId: archivedProject.id,
@@ -556,7 +555,7 @@ export async function archiveProject(projectId: string) {
     // Prisma throws an error if the record to update is not found.
     // We can treat that as a "not found or access denied" case.
     logError('ArchiveProject', 'Error archiving project:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.PROJECT_ARCHIVE,
       status: 'failure',
       actorId: auditUserId,
@@ -698,7 +697,7 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
       },
     });
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MEETING_CREATE,
       actorId: userId,
       projectId,
@@ -709,7 +708,7 @@ export async function createMeeting(projectId: string, name: string, meetingUrl:
     return { success: true, meeting };
   } catch (error: any) {
     logError('CreateMeeting', 'Error creating meeting:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MEETING_CREATE,
       status: 'failure',
       actorId: auditUserId,
@@ -834,7 +833,7 @@ export async function deleteMeeting(meetingId: string, meetingUrl: string) {
       }
     }
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MEETING_DELETE,
       actorId: userId,
       projectId: meeting?.projectId ?? null,
@@ -844,7 +843,7 @@ export async function deleteMeeting(meetingId: string, meetingUrl: string) {
     return { success: true };
   } catch (error: any) {
     logError('DeleteMeeting', 'Error deleting meeting:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MEETING_DELETE,
       status: 'failure',
       actorId: auditUserId,
@@ -996,7 +995,7 @@ export async function saveAIConfigSection(input: {
       create: { userId, purpose, baseUrl, apiKeyEnc, model },
     });
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.AI_CONFIG_SAVE,
       actorId: userId,
       target: purpose,
@@ -1006,7 +1005,7 @@ export async function saveAIConfigSection(input: {
     return { success: true };
   } catch (error: any) {
     logError('SaveAIConfig', 'Error saving AI config:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.AI_CONFIG_SAVE,
       status: 'failure',
       actorId: auditUserId,
@@ -1030,7 +1029,7 @@ export async function deleteAIConfigSection(input: {
       where: { userId, purpose: input.purpose },
     });
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.AI_CONFIG_DELETE,
       actorId: userId,
       target: input.purpose,
@@ -1040,7 +1039,7 @@ export async function deleteAIConfigSection(input: {
     return { success: true };
   } catch (error: any) {
     logError('DeleteAIConfig', 'Error deleting AI config:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.AI_CONFIG_DELETE,
       status: 'failure',
       actorId: auditUserId,
@@ -1208,7 +1207,7 @@ export async function deleteConversation(conversationId: string) {
       }
     }, 30_000);
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.CONVERSATION_DELETE,
       actorId: userId,
       projectId: conversation?.projectId ?? null,
@@ -1218,7 +1217,7 @@ export async function deleteConversation(conversationId: string) {
     return { success: true };
   } catch (error: any) {
     logError('DeleteConversation', 'Error:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.CONVERSATION_DELETE,
       status: 'failure',
       actorId: auditUserId,
@@ -1491,7 +1490,7 @@ export async function editMessage(
       data: { conversationId, role: "user", content: newContent },
     });
 
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MESSAGE_EDIT,
       actorId: userId,
       projectId,
@@ -1502,7 +1501,7 @@ export async function editMessage(
     return await buildAndStreamResponse(conversationId, newContent, projectId, userId);
   } catch (error: any) {
     logError('EditMessage', 'Error in editMessage:', error);
-    recordAudit({
+    recordAudit.request({
       action: AUDIT_ACTIONS.MESSAGE_EDIT,
       status: 'failure',
       actorId: auditUserId,

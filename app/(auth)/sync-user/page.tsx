@@ -35,7 +35,7 @@ const SyncUser = async () => {
     }
   })
 
-  recordAudit({
+  recordAudit.request({
     action: AUDIT_ACTIONS.USER_SYNC,
     actorId: user.id,
     target: user.emailAddresses[0].emailAddress,
